@@ -5,6 +5,7 @@ import { rebuildPublicRoomState } from "@/lib/server/room-state";
 import type { PlayerAuthRow, RoomAuthRow } from "@/lib/server/auth";
 import {
   computeTeamScores,
+  consequenceQuotas,
   isAfterDeadline,
   phaseUpdate,
   randomItem,
@@ -238,6 +239,65 @@ function toChallengeOption(challenge: ChallengeRow): ChallengeOption {
   };
 }
 
+const CONSEQUENCE_CHOICES: ConsequenceChoice[] = ["DRINK", "FLIP", "CHALLENGE"];
+
+function isConsequenceChoice(value: unknown): value is ConsequenceChoice {
+  return (
+    value === "DRINK" ||
+    value === "FLIP" ||
+    value === "CHALLENGE"
+  );
+}
+
+function readConsequenceChoices(payload: Record<string, unknown> | null | undefined) {
+  if (
+    payload &&
+    typeof payload.consequenceChoices === "object" &&
+    !Array.isArray(payload.consequenceChoices)
+  ) {
+    return payload.consequenceChoices as Record<string, ConsequenceChoice>;
+  }
+
+  return {};
+}
+
+function countPlayerConsequenceChoices(
+  penalties: Pick<PenaltyRow, "payload">[],
+  playerId: string,
+) {
+  const counts: Record<ConsequenceChoice, number> = {
+    DRINK: 0,
+    FLIP: 0,
+    CHALLENGE: 0,
+  };
+
+  for (const penalty of penalties) {
+    const choice = readConsequenceChoices(penalty.payload)[playerId];
+
+    if (isConsequenceChoice(choice)) {
+      counts[choice] += 1;
+    }
+  }
+
+  return counts;
+}
+
+function crossPickTargets(teams: TeamRow[]) {
+  if (teams.length < 2) {
+    throw new Error("At least two teams are required for challenge picking.");
+  }
+
+  const offsets = Array.from({ length: teams.length - 1 }, (_, index) => index + 1);
+  const offset = randomItem(offsets);
+
+  return new Map(
+    teams.map((team, index) => [
+      team.id,
+      teams[(index + offset) % teams.length],
+    ]),
+  );
+}
+
 async function assignLeadersAndChallenges(
   supabase: SupabaseAdmin,
   room: RoomAuthRow,
@@ -322,8 +382,14 @@ async function assignLeadersAndChallenges(
     throw new Error(leaderInsertError.message);
   }
 
+  const targetByChooserTeamId = crossPickTargets(teams);
   const assignmentRows = teams.map((team) => {
-    const targetTeam = teams[(team.team_index + 1) % teams.length];
+    const targetTeam = targetByChooserTeamId.get(team.id);
+
+    if (!targetTeam) {
+      throw new Error("Challenge target team could not be assigned.");
+    }
+
     const leader = leaderRows.find((row) => row.team_id === team.id);
     const options = randomSample(challenges, Math.min(3, challenges.length)).map(
       toChallengeOption,
@@ -350,6 +416,112 @@ async function assignLeadersAndChallenges(
   }
 }
 
+async function ensureSelectionPenalties(
+  supabase: SupabaseAdmin,
+  room: RoomAuthRow,
+  round: RoundRow,
+) {
+  const [teams, existingPenalties] = await Promise.all([
+    loadTeams(supabase, room.id),
+    loadPenalties(supabase, round.id),
+  ]);
+  const existingTeamIds = new Set(existingPenalties.map((penalty) => penalty.team_id));
+  const rows = teams
+    .filter((team) => !existingTeamIds.has(team.id))
+    .map((team) => ({
+      room_id: room.id,
+      round_id: round.id,
+      team_id: team.id,
+      status: "selection",
+      queue_index: team.team_index,
+      payload: { consequenceChoices: {} },
+    }));
+
+  if (rows.length === 0) {
+    return;
+  }
+
+  const { error } = await supabase.from("penalties").insert(rows);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function finalizeStepTwoSelections(
+  supabase: SupabaseAdmin,
+  room: RoomAuthRow,
+  round: RoundRow,
+) {
+  await ensureSelectionPenalties(supabase, room, round);
+  await ensureChallengeSelections(supabase, round.id);
+
+  const [players, leadersResult, penalties] = await Promise.all([
+    loadPlayers(supabase, room.id),
+    supabase
+      .from("round_leaders")
+      .select("team_id, player_id")
+      .eq("round_id", round.id)
+      .returns<Array<{ team_id: string; player_id: string }>>(),
+    loadPenalties(supabase, round.id),
+  ]);
+
+  if (leadersResult.error) {
+    throw new Error(leadersResult.error.message);
+  }
+
+  for (const penalty of penalties) {
+    if (penalty.status !== "selection") {
+      continue;
+    }
+
+    const leaderId =
+      leadersResult.data?.find((leader) => leader.team_id === penalty.team_id)
+        ?.player_id || null;
+    const activeTeamPlayers = players.filter(
+      (candidate) =>
+        candidate.team_id === penalty.team_id && candidate.status === "active",
+    );
+    const nonLeaderPlayers = activeTeamPlayers.filter(
+      (candidate) => candidate.id !== leaderId,
+    );
+    const lambCandidates =
+      nonLeaderPlayers.length > 0 ? nonLeaderPlayers : activeTeamPlayers;
+    const fallbackLambId =
+      lambCandidates.length > 0 ? randomItem(lambCandidates).id : leaderId;
+    const lambId = penalty.lamb_player_id || fallbackLambId;
+
+    if (!lambId) {
+      throw new Error("Every team needs an active player for selection.");
+    }
+
+    const choices = readConsequenceChoices(penalty.payload);
+    const selectedChoice = isConsequenceChoice(choices[lambId])
+      ? choices[lambId]
+      : randomItem(CONSEQUENCE_CHOICES);
+    const consequenceChoices = {
+      ...choices,
+      ...(lambId ? { [lambId]: selectedChoice } : {}),
+    };
+    const { error } = await supabase
+      .from("penalties")
+      .update({
+        lamb_player_id: lambId,
+        consequence_choice: selectedChoice,
+        payload: {
+          ...(penalty.payload || {}),
+          consequenceChoices,
+          selectionFinalizedAt: new Date().toISOString(),
+        },
+      })
+      .eq("id", penalty.id);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+}
+
 async function chooseNextQuestion(supabase: SupabaseAdmin, room: RoomAuthRow) {
   const settings = readSettings(room.settings);
   let query = supabase
@@ -372,19 +544,56 @@ async function chooseNextQuestion(supabase: SupabaseAdmin, room: RoomAuthRow) {
     throw new Error("Import at least one enabled question before starting.");
   }
 
-  const { data: usedRounds, error: usedError } = await supabase
-    .from("rounds")
-    .select("question_id")
-    .eq("room_id", room.id)
-    .not("question_id", "is", null)
-    .returns<Array<{ question_id: string }>>();
+  const [{ data: roomRounds, error: roomRoundsError }, { data: globalRounds, error: globalRoundsError }] =
+    await Promise.all([
+      supabase
+        .from("rounds")
+        .select("question_id")
+        .eq("room_id", room.id)
+        .not("question_id", "is", null)
+        .returns<Array<{ question_id: string }>>(),
+      supabase
+        .from("rounds")
+        .select("question_id")
+        .not("question_id", "is", null)
+        .returns<Array<{ question_id: string }>>(),
+    ]);
 
-  if (usedError) {
-    throw new Error(usedError.message);
+  if (roomRoundsError) {
+    throw new Error(roomRoundsError.message);
   }
 
-  const usedIds = new Set((usedRounds || []).map((round) => round.question_id));
-  return questions.find((question) => !usedIds.has(question.id)) || questions[0];
+  if (globalRoundsError) {
+    throw new Error(globalRoundsError.message);
+  }
+
+  const roomUsedIds = new Set(
+    (roomRounds || []).map((round) => round.question_id),
+  );
+  const questionIds = new Set(questions.map((question) => question.id));
+  const globalUsage = new Map<string, number>();
+
+  for (const round of globalRounds || []) {
+    if (questionIds.has(round.question_id)) {
+      globalUsage.set(
+        round.question_id,
+        (globalUsage.get(round.question_id) || 0) + 1,
+      );
+    }
+  }
+
+  const roomUnusedQuestions = questions.filter(
+    (question) => !roomUsedIds.has(question.id),
+  );
+  const candidates =
+    roomUnusedQuestions.length > 0 ? roomUnusedQuestions : questions;
+
+  return [...candidates].sort((left, right) => {
+    const leftUsage = globalUsage.get(left.id) || 0;
+    const rightUsage = globalUsage.get(right.id) || 0;
+
+    return leftUsage - rightUsage || left.id.localeCompare(right.id);
+  })[0];
 }
 
 async function createNextRound(supabase: SupabaseAdmin, room: RoomAuthRow) {
@@ -443,6 +652,7 @@ async function createNextRound(supabase: SupabaseAdmin, room: RoomAuthRow) {
   }
 
   await assignLeadersAndChallenges(supabase, room, round);
+  await ensureSelectionPenalties(supabase, room, round);
 
   const { error: roomError } = await supabase
     .from("rooms")
@@ -499,7 +709,7 @@ async function showQuestion(supabase: SupabaseAdmin, room: RoomAuthRow) {
     throw new Error("Start the game before showing a question.");
   }
 
-  await ensureChallengeSelections(supabase, round.id);
+  await finalizeStepTwoSelections(supabase, room, round);
   await setRoomPhase(supabase, room.id, "QUESTION_ACTIVE", settings.questionTimerSeconds);
   await supabase.from("rounds").update({ phase: "QUESTION_ACTIVE" }).eq("id", round.id);
   await logEvent(supabase, room.id, "QUESTION_SHOWN", { roundId: round.id });
@@ -562,7 +772,7 @@ async function revealAnswer(supabase: SupabaseAdmin, room: RoomAuthRow) {
       .map((team) =>
         supabase
           .from("teams")
-          .update({ score: team.score + 1 })
+          .update({ score: team.score + 10 })
           .eq("id", team.id),
       );
     await Promise.all(winnerScores);
@@ -767,32 +977,83 @@ async function startLambSelection(supabase: SupabaseAdmin, room: RoomAuthRow) {
     return;
   }
 
+  await finalizeStepTwoSelections(supabase, room, round);
+
   const teams = await loadTeams(supabase, room.id);
-  const rows = failedTeamIds
+  const penalties = await loadPenalties(supabase, round.id);
+  const failedTeamSet = new Set(failedTeamIds);
+  const failedTeams = failedTeamIds
     .map((teamId) => teams.find((team) => team.id === teamId))
     .filter(Boolean)
-    .sort((left, right) => (left?.team_index || 0) - (right?.team_index || 0))
-    .map((team, queueIndex) => ({
-      room_id: room.id,
-      round_id: round.id,
-      team_id: team?.id,
-      status: "awaiting_lamb",
-      queue_index: queueIndex,
-    }));
+    .sort((left, right) => (left?.team_index || 0) - (right?.team_index || 0));
 
-  const { error } = await supabase.from("penalties").insert(rows);
+  for (const penalty of penalties) {
+    const queueIndex = failedTeams.findIndex((team) => team?.id === penalty.team_id);
+    const status = failedTeamSet.has(penalty.team_id)
+      ? "awaiting_consequence"
+      : "complete";
+    const { error } = await supabase
+      .from("penalties")
+      .update({
+        status,
+        queue_index: queueIndex >= 0 ? queueIndex : penalty.queue_index,
+      })
+      .eq("id", penalty.id);
 
-  if (error) {
-    throw new Error(error.message);
+    if (error) {
+      throw new Error(error.message);
+    }
   }
 
-  const settings = readSettings(room.settings);
-  await setRoomPhase(
-    supabase,
-    room.id,
-    "SACRIFICIAL_LAMB_SELECTION",
-    settings.lambSelectionSeconds,
-  );
+  await setRoomPhase(supabase, room.id, "SACRIFICIAL_LAMB_REVEAL");
+}
+
+async function preparePenaltyQueueFromResults(
+  supabase: SupabaseAdmin,
+  room: RoomAuthRow,
+  round: RoundRow,
+) {
+  const results = round.results as {
+    lastPlaceTeamIds?: string[];
+  };
+  const lastPlaceTeamIds = results.lastPlaceTeamIds || [];
+
+  if (lastPlaceTeamIds.length === 0) {
+    await setRoomPhase(supabase, room.id, "ROUND_COMPLETE");
+    return false;
+  }
+
+  await finalizeStepTwoSelections(supabase, room, round);
+
+  const teams = await loadTeams(supabase, room.id);
+  const penalties = await loadPenalties(supabase, round.id);
+  const lastPlaceTeamSet = new Set(lastPlaceTeamIds);
+  const lastPlaceTeams = lastPlaceTeamIds
+    .map((teamId) => teams.find((team) => team.id === teamId))
+    .filter(Boolean)
+    .sort((left, right) => (left?.team_index || 0) - (right?.team_index || 0));
+
+  for (const penalty of penalties) {
+    const queueIndex = lastPlaceTeams.findIndex(
+      (team) => team?.id === penalty.team_id,
+    );
+    const status = lastPlaceTeamSet.has(penalty.team_id)
+      ? "awaiting_consequence"
+      : "complete";
+    const { error } = await supabase
+      .from("penalties")
+      .update({
+        status,
+        queue_index: queueIndex >= 0 ? queueIndex : penalty.queue_index,
+      })
+      .eq("id", penalty.id);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+
+  return true;
 }
 
 async function fillMissingLambs(supabase: SupabaseAdmin, room: RoomAuthRow) {
@@ -862,6 +1123,25 @@ async function revealLambs(supabase: SupabaseAdmin, room: RoomAuthRow) {
 }
 
 async function startConsequenceChoice(supabase: SupabaseAdmin, room: RoomAuthRow) {
+  const round = await loadCurrentRound(supabase, room);
+
+  if (!round) {
+    throw new Error("No active round.");
+  }
+
+  await finalizeStepTwoSelections(supabase, room, round);
+
+  const penalties = await loadPenalties(supabase, round.id);
+  const waitingForChoice = penalties.some(
+    (penalty) =>
+      penalty.status === "awaiting_consequence" && !penalty.consequence_choice,
+  );
+
+  if (!waitingForChoice) {
+    await activateNextPenalty(supabase, room);
+    return;
+  }
+
   const settings = readSettings(room.settings);
   await setRoomPhase(
     supabase,
@@ -945,7 +1225,9 @@ async function activateNextPenalty(supabase: SupabaseAdmin, room: RoomAuthRow) {
   }
 
   const penalties = await loadPenalties(supabase, round.id);
-  const nextPenalty = penalties.find((penalty) => penalty.status !== "complete");
+  const nextPenalty = penalties.find(
+    (penalty) => penalty.status !== "complete" && penalty.status !== "selection",
+  );
 
   if (!nextPenalty) {
     await setRoomPhase(supabase, room.id, "ROUND_COMPLETE");
@@ -955,7 +1237,7 @@ async function activateNextPenalty(supabase: SupabaseAdmin, room: RoomAuthRow) {
   let status = nextPenalty.status;
 
   if (status === "awaiting_consequence") {
-    const choice = nextPenalty.consequence_choice || "CHALLENGE";
+    const choice = nextPenalty.consequence_choice || randomItem(CONSEQUENCE_CHOICES);
 
     if (!nextPenalty.consequence_choice) {
       await supabase
@@ -964,7 +1246,12 @@ async function activateNextPenalty(supabase: SupabaseAdmin, room: RoomAuthRow) {
         .eq("id", nextPenalty.id);
     }
 
-    status = choice === "DRINK" ? "awaiting_drink" : "challenge_reveal";
+    status =
+      choice === "DRINK"
+        ? "awaiting_drink"
+        : choice === "FLIP"
+          ? "bottle_active"
+          : "challenge_reveal";
 
     await supabase.from("penalties").update({ status }).eq("id", nextPenalty.id);
 
@@ -973,7 +1260,36 @@ async function activateNextPenalty(supabase: SupabaseAdmin, room: RoomAuthRow) {
     }
   }
 
-  await setRoomPhase(supabase, room.id, phaseForPenaltyStatus(status));
+  await setRoomPhase(
+    supabase,
+    room.id,
+    phaseForPenaltyStatus(status),
+    undefined,
+  );
+}
+
+async function startPenaltyQueue(supabase: SupabaseAdmin, room: RoomAuthRow) {
+  const round = await loadCurrentRound(supabase, room);
+
+  if (!round) {
+    throw new Error("No active round.");
+  }
+
+  const penalties = await loadPenalties(supabase, round.id);
+
+  if (penalties.some((penalty) => penalty.status === "selection")) {
+    const hasPenaltyQueue = await preparePenaltyQueueFromResults(
+      supabase,
+      room,
+      round,
+    );
+
+    if (!hasPenaltyQueue) {
+      return;
+    }
+  }
+
+  await activateNextPenalty(supabase, room);
 }
 
 async function completeActivePenalty(
@@ -1024,22 +1340,21 @@ async function startChallenge(supabase: SupabaseAdmin, room: RoomAuthRow) {
     throw new Error("No challenge is ready to start.");
   }
 
-  const { data: assignment, error } = await supabase
+  const { error } = await supabase
     .from("challenge_assignments")
-    .select("challenges(duration_seconds)")
+    .select("id")
     .eq("id", active.challenge_assignment_id)
-    .maybeSingle<{ challenges: { duration_seconds: number } | null }>();
+    .maybeSingle<{ id: string }>();
 
   if (error) {
     throw new Error(error.message);
   }
 
-  const duration = assignment?.challenges?.duration_seconds || 30;
   await supabase
     .from("penalties")
     .update({ status: "challenge_active" })
     .eq("id", active.id);
-  await setRoomPhase(supabase, room.id, "CHALLENGE_ACTIVE", duration);
+  await setRoomPhase(supabase, room.id, "CHALLENGE_ACTIVE");
 }
 
 async function challengeFailed(supabase: SupabaseAdmin, room: RoomAuthRow) {
@@ -1236,7 +1551,7 @@ export async function runHostAction(
       await startConsequenceChoice(supabase, room);
       break;
     case "START_PENALTY_QUEUE":
-      await activateNextPenalty(supabase, room);
+      await startPenaltyQueue(supabase, room);
       break;
     case "CONFIRM_DRINK":
       await completeActivePenalty(supabase, room, { drinkConfirmed: true });
@@ -1460,11 +1775,15 @@ export async function selectSacrificialLamb(
   player: PlayerAuthRow,
   lambPlayerId: string,
 ) {
-  if (room.phase !== "SACRIFICIAL_LAMB_SELECTION") {
+  if (
+    room.phase !== "CHALLENGE_SELECTION" &&
+    room.phase !== "SACRIFICIAL_LAMB_SELECTION"
+  ) {
     throw new Error("Sacrificial Lamb selection is not active.");
   }
 
   const round = await requireLeader(supabase, room, player);
+  await ensureSelectionPenalties(supabase, room, round);
   const players = await loadPlayers(supabase, room.id);
   const selected = players.find(
     (candidate) =>
@@ -1477,9 +1796,27 @@ export async function selectSacrificialLamb(
     throw new Error("Selected lamb must be an active teammate.");
   }
 
+  const { data: penalty, error: penaltyError } = await supabase
+    .from("penalties")
+    .select("id, payload")
+    .eq("round_id", round.id)
+    .eq("team_id", player.team_id)
+    .maybeSingle<{ id: string; payload: Record<string, unknown> }>();
+
+  if (penaltyError) {
+    throw new Error(penaltyError.message);
+  }
+
+  const choices = readConsequenceChoices(penalty?.payload);
+  const selectedChoice = choices[selected.id];
   const { error } = await supabase
     .from("penalties")
-    .update({ lamb_player_id: selected.id })
+    .update({
+      lamb_player_id: selected.id,
+      ...(isConsequenceChoice(selectedChoice)
+        ? { consequence_choice: selectedChoice }
+        : {}),
+    })
     .eq("round_id", round.id)
     .eq("team_id", player.team_id);
 
@@ -1496,7 +1833,14 @@ export async function chooseConsequence(
   player: PlayerAuthRow,
   choice: ConsequenceChoice,
 ) {
-  if (room.phase !== "CONSEQUENCE_CHOICE") {
+  if (!isConsequenceChoice(choice)) {
+    throw new Error("Consequence choice is not valid.");
+  }
+
+  if (
+    room.phase !== "CHALLENGE_SELECTION" &&
+    room.phase !== "CONSEQUENCE_CHOICE"
+  ) {
     throw new Error("Consequence choice is not active.");
   }
 
@@ -1504,6 +1848,84 @@ export async function chooseConsequence(
 
   if (!round) {
     throw new Error("No active round.");
+  }
+
+  if (room.phase === "CHALLENGE_SELECTION") {
+    if (!player.team_id) {
+      throw new Error("You need a team before choosing a consequence.");
+    }
+
+    const { data: leader } = await supabase
+      .from("round_leaders")
+      .select("id")
+      .eq("round_id", round.id)
+      .eq("team_id", player.team_id)
+      .eq("player_id", player.id)
+      .maybeSingle<{ id: string }>();
+
+    if (leader) {
+      throw new Error("Group Leaders do not choose a punishment.");
+    }
+
+    await ensureSelectionPenalties(supabase, room, round);
+    const { data: roomPenalties, error: roomPenaltiesError } = await supabase
+      .from("penalties")
+      .select("payload")
+      .eq("room_id", room.id)
+      .returns<Array<{ payload: Record<string, unknown> }>>();
+
+    if (roomPenaltiesError) {
+      throw new Error(roomPenaltiesError.message);
+    }
+
+    const quotas = consequenceQuotas(readSettings(room.settings).rounds);
+    const usage = countPlayerConsequenceChoices(roomPenalties || [], player.id);
+
+    if (usage[choice] >= quotas[choice]) {
+      throw new Error(`${choice.toLowerCase()} has no picks left.`);
+    }
+
+    const { data: penalty, error: penaltyError } = await supabase
+      .from("penalties")
+      .select("id, lamb_player_id, payload")
+      .eq("round_id", round.id)
+      .eq("team_id", player.team_id)
+      .maybeSingle<{
+        id: string;
+        lamb_player_id: string | null;
+        payload: Record<string, unknown>;
+      }>();
+
+    if (penaltyError) {
+      throw new Error(penaltyError.message);
+    }
+
+    if (!penalty) {
+      throw new Error("Team selection row was not found.");
+    }
+
+    const consequenceChoices = {
+      ...readConsequenceChoices(penalty.payload),
+      [player.id]: choice,
+    };
+    const { error } = await supabase
+      .from("penalties")
+      .update({
+        payload: {
+          ...(penalty.payload || {}),
+          consequenceChoices,
+        },
+        ...(penalty.lamb_player_id === player.id
+          ? { consequence_choice: choice }
+          : {}),
+      })
+      .eq("id", penalty.id);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return rebuildPublicRoomState(room.id);
   }
 
   const { error } = await supabase

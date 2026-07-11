@@ -2,10 +2,15 @@ import { getSupabaseAdmin } from "@/lib/supabase/server";
 import { fail, ok } from "@/lib/server/http";
 import { rebuildPublicRoomState, toPlayerPublic } from "@/lib/server/room-state";
 import { hashToken } from "@/lib/server/tokens";
-import { savingGracePrompt } from "@/lib/server/game-utils";
+import {
+  consequenceQuotas,
+  readSettings,
+  savingGracePrompt,
+} from "@/lib/server/game-utils";
 import { normalizeRoomCode } from "@/lib/validation";
 import type {
   AnswerOption,
+  ConsequenceChoice,
   GamePhase,
   PlayerPrivateState,
   PlayerStatus,
@@ -15,6 +20,33 @@ import type {
 
 export const runtime = "nodejs";
 
+function countPlayerConsequenceUsage(
+  penalties: Array<{ payload: Record<string, unknown> | null }>,
+  playerId: string,
+) {
+  const counts: Record<ConsequenceChoice, number> = {
+    DRINK: 0,
+    FLIP: 0,
+    CHALLENGE: 0,
+  };
+
+  for (const penalty of penalties) {
+    const choices =
+      penalty.payload &&
+      typeof penalty.payload.consequenceChoices === "object" &&
+      !Array.isArray(penalty.payload.consequenceChoices)
+        ? (penalty.payload.consequenceChoices as Record<string, unknown>)
+        : {};
+    const choice = choices[playerId];
+
+    if (choice === "DRINK" || choice === "FLIP" || choice === "CHALLENGE") {
+      counts[choice] += 1;
+    }
+  }
+
+  return counts;
+}
+
 interface RoomRow {
   id: string;
   room_code: string;
@@ -22,6 +54,7 @@ interface RoomRow {
   phase: GamePhase;
   team_count: number;
   current_round_number: number;
+  settings: Record<string, unknown>;
 }
 
 interface PlayerRow {
@@ -63,7 +96,7 @@ export async function GET(
 
   const { data: room, error: roomError } = await supabase
     .from("rooms")
-    .select("id, room_code, title, phase, team_count, current_round_number")
+    .select("id, room_code, title, phase, team_count, current_round_number, settings")
     .eq("room_code", roomCode)
     .maybeSingle<RoomRow>();
 
@@ -159,23 +192,43 @@ export async function GET(
   }
 
   if (leader && room.phase === "CHALLENGE_SELECTION" && player.team_id && round) {
-    const { data: assignment } = await supabase
-      .from("challenge_assignments")
-      .select("id, challenge_id, options")
-      .eq("round_id", round.id)
-      .eq("chooser_team_id", player.team_id)
-      .maybeSingle<{
-        id: string;
-        challenge_id: string | null;
-        options: Array<{
+    const [{ data: assignment }, { data: penalty }] = await Promise.all([
+      supabase
+        .from("challenge_assignments")
+        .select("id, challenge_id, options")
+        .eq("round_id", round.id)
+        .eq("chooser_team_id", player.team_id)
+        .maybeSingle<{
           id: string;
-          title: string;
-          instructions: string;
-          durationSeconds: number;
-          successCriteria: string;
-        }>;
-      }>();
+          challenge_id: string | null;
+          options: Array<{
+            id: string;
+            title: string;
+            instructions: string;
+            durationSeconds: number;
+            successCriteria: string;
+          }>;
+        }>(),
+      supabase
+        .from("penalties")
+        .select("lamb_player_id")
+        .eq("round_id", round.id)
+        .eq("team_id", player.team_id)
+        .maybeSingle<{ lamb_player_id: string | null }>(),
+    ]);
 
+    const leaderId = player.id;
+    const nonLeaderPlayers =
+      team?.players.filter(
+        (candidate) =>
+          candidate.status === "active" && candidate.id !== leaderId,
+      ) || [];
+    actions.lambOptions =
+      nonLeaderPlayers.length > 0
+        ? nonLeaderPlayers
+        : team?.players.filter((candidate) => candidate.status === "active") || [];
+    actions.selectedLambPlayerId = penalty?.lamb_player_id || null;
+    actions.selectedChallengeId = assignment?.challenge_id || null;
     actions.leaderChallengeOptions =
       assignment && !assignment.challenge_id
         ? assignment.options.map((option) => ({
@@ -185,8 +238,44 @@ export async function GET(
             instructions: option.instructions,
             durationSeconds: option.durationSeconds,
             successCriteria: option.successCriteria,
-          }))
+        }))
         : [];
+  }
+
+  if (!leader && room.phase === "CHALLENGE_SELECTION" && player.team_id && round) {
+    const [{ data: penalty }, { data: roomPenalties }] = await Promise.all([
+      supabase
+        .from("penalties")
+        .select("payload")
+        .eq("round_id", round.id)
+        .eq("team_id", player.team_id)
+        .maybeSingle<{ payload: Record<string, unknown> | null }>(),
+      supabase
+        .from("penalties")
+        .select("payload")
+        .eq("room_id", room.id)
+        .returns<Array<{ payload: Record<string, unknown> | null }>>(),
+    ]);
+    const consequenceChoices =
+      penalty?.payload &&
+      typeof penalty.payload.consequenceChoices === "object" &&
+      !Array.isArray(penalty.payload.consequenceChoices)
+        ? (penalty.payload.consequenceChoices as Record<string, unknown>)
+        : {};
+    const myChoice = consequenceChoices[player.id];
+    const usage = countPlayerConsequenceUsage(roomPenalties || [], player.id);
+    const quotas = consequenceQuotas(readSettings(room.settings).rounds);
+
+    actions.consequenceOptions = ["DRINK", "FLIP", "CHALLENGE"];
+    actions.consequenceRemaining = {
+      DRINK: Math.max(0, quotas.DRINK - usage.DRINK),
+      FLIP: Math.max(0, quotas.FLIP - usage.FLIP),
+      CHALLENGE: Math.max(0, quotas.CHALLENGE - usage.CHALLENGE),
+    };
+    actions.myConsequenceChoice =
+      myChoice === "DRINK" || myChoice === "FLIP" || myChoice === "CHALLENGE"
+        ? (myChoice as ConsequenceChoice)
+        : null;
   }
 
   if (leader && room.phase === "SAVING_GRACE_CATEGORY") {
@@ -253,7 +342,7 @@ export async function GET(
       room.phase === "CONSEQUENCE_CHOICE" &&
       penalty?.lamb_player_id === player.id
     ) {
-      actions.consequenceOptions = ["DRINK", "CHALLENGE"];
+      actions.consequenceOptions = ["DRINK", "FLIP", "CHALLENGE"];
     }
 
     if (

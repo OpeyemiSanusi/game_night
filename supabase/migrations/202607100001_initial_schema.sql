@@ -36,7 +36,7 @@ end $$;
 create table if not exists rooms (
   id uuid primary key default gen_random_uuid(),
   room_code text not null unique,
-  title text not null default 'Who Said That?',
+  title text not null default 'Who Said?',
   phase game_phase not null default 'LOBBY',
   team_count integer not null check (team_count between 3 and 8),
   host_token_hash text not null,
@@ -213,7 +213,7 @@ create table if not exists penalties (
   team_id uuid not null references teams(id) on delete cascade,
   lamb_player_id uuid references players(id) on delete set null,
   rescuer_player_id uuid references players(id) on delete set null,
-  consequence_choice text check (consequence_choice in ('DRINK', 'CHALLENGE')),
+  consequence_choice text check (consequence_choice in ('DRINK', 'FLIP', 'CHALLENGE')),
   challenge_assignment_id uuid references challenge_assignments(id) on delete set null,
   status text not null default 'pending',
   queue_index integer not null default 0,
@@ -276,16 +276,16 @@ on conflict (id) do nothing;
 
 insert into challenges (deck_id, title, instructions, duration_seconds, success_criteria, props)
 values
-  ('00000000-0000-0000-0000-000000000001', 'Silent Charades', 'Act out a movie title chosen by the host without speaking.', 45, 'At least one teammate guesses close enough for the host to approve.', '{"declinable": true}'::jsonb),
-  ('00000000-0000-0000-0000-000000000001', 'One-Handed Stack', 'Stack five lightweight cups using only one hand.', 30, 'The stack stands for three seconds.', '{"props": ["cups"], "declinable": true}'::jsonb),
-  ('00000000-0000-0000-0000-000000000001', 'Whisper Relay', 'Repeat a short phrase through two teammates by whispering.', 45, 'The final phrase keeps the main idea.', '{"declinable": true}'::jsonb),
-  ('00000000-0000-0000-0000-000000000001', 'Pose Match', 'Match a harmless pose shown by the host.', 20, 'The host judges the pose as close enough.', '{"declinable": true}'::jsonb),
-  ('00000000-0000-0000-0000-000000000001', 'Compliment Sprint', 'Give three sincere compliments to three different players.', 30, 'All three compliments are completed respectfully.', '{"declinable": true}'::jsonb),
-  ('00000000-0000-0000-0000-000000000001', 'Emoji Story', 'Tell a five-second story using only three emoji names.', 20, 'The story includes all three emoji names.', '{"declinable": true}'::jsonb),
-  ('00000000-0000-0000-0000-000000000001', 'Tabletop Curling', 'Slide a coaster toward a marked target on a table.', 20, 'The coaster stops inside the host-marked zone.', '{"props": ["coaster"], "declinable": true}'::jsonb),
-  ('00000000-0000-0000-0000-000000000001', 'Memory Chain', 'Repeat a chain of six simple words after the host reads them once.', 30, 'At least five words are recalled in order.', '{"declinable": true}'::jsonb),
-  ('00000000-0000-0000-0000-000000000001', 'Air Drawing', 'Draw an object in the air while teammates guess.', 30, 'A teammate guesses the object.', '{"declinable": true}'::jsonb),
-  ('00000000-0000-0000-0000-000000000001', 'Beat Keeper', 'Clap a steady rhythm for ten seconds while the host tries to distract you verbally.', 15, 'The rhythm stays recognizable for ten seconds.', '{"declinable": true}'::jsonb)
+  ('00000000-0000-0000-0000-000000000001', 'Dramatic Weather Report', 'Give a dramatic weather report about the room like a breaking-news anchor.', 30, 'Stay in character for the full report.', '{"declinable": true}'::jsonb),
+  ('00000000-0000-0000-0000-000000000001', 'Invisible Sandwich', 'Make and eat an invisible sandwich with full commitment.', 25, 'The host believes every imaginary ingredient was included.', '{"declinable": true}'::jsonb),
+  ('00000000-0000-0000-0000-000000000001', 'Tiny Dance Tutorial', 'Teach the group a tiny dance that only uses shoulders and eyebrows.', 30, 'At least two people copy the move.', '{"declinable": true}'::jsonb),
+  ('00000000-0000-0000-0000-000000000001', 'Serious Apology', 'Apologize sincerely to a random object for ten seconds.', 15, 'The apology sounds serious enough for the host.', '{"declinable": true}'::jsonb),
+  ('00000000-0000-0000-0000-000000000001', 'Bad Movie Trailer', 'Narrate the trailer for the most boring movie ever made.', 30, 'Include a title, a villain, and a dramatic ending.', '{"declinable": true}'::jsonb),
+  ('00000000-0000-0000-0000-000000000001', 'Luxury Product Pitch', 'Sell a plain cup, napkin, or spoon like it costs one million dollars.', 30, 'The pitch includes three ridiculous premium features.', '{"declinable": true}'::jsonb),
+  ('00000000-0000-0000-0000-000000000001', 'Slow Motion Celebration', 'Celebrate a tiny win in slow motion.', 20, 'The whole celebration stays slow motion.', '{"declinable": true}'::jsonb),
+  ('00000000-0000-0000-0000-000000000001', 'Royal Decree', 'Announce a new harmless law for the room like royalty.', 25, 'The law is clear and the royal voice stays consistent.', '{"declinable": true}'::jsonb),
+  ('00000000-0000-0000-0000-000000000001', 'Confused Fitness Coach', 'Lead a five-move workout where every move has a nonsense name.', 30, 'All five move names are different.', '{"declinable": true}'::jsonb),
+  ('00000000-0000-0000-0000-000000000001', 'Soap Opera Stare', 'React to harmless news with a silent soap-opera stare.', 15, 'Hold the dramatic reaction without laughing first.', '{"declinable": true}'::jsonb)
 on conflict do nothing;
 
 insert into question_packs (id, name, description)

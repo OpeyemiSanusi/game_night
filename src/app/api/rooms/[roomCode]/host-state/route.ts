@@ -25,13 +25,13 @@ function getNextAction(phase: GamePhase) {
     case "TEAM_SETUP":
       return "Start Game";
     case "CHALLENGE_SELECTION":
-      return "Show Question";
+      return "Waiting for Player Selection";
     case "QUESTION_ACTIVE":
       return "Lock Voting";
     case "VOTING_LOCKED":
       return "Reveal Answer";
     case "ANSWER_REVEAL":
-      return "Start Saving Grace";
+      return "Start Punishments";
     case "ROUND_DRAW":
       return "Next Round";
     case "SAVING_GRACE_CATEGORY":

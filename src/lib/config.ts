@@ -1,13 +1,13 @@
-export const DEFAULT_TITLE = "Who Said That?";
+export const DEFAULT_TITLE = "Who Said?";
 export const DEFAULT_TEAM_COUNT = 4;
 export const MIN_TEAM_COUNT = 3;
 export const MAX_TEAM_COUNT = 8;
 export const SOFT_PLAYER_CAP = 31;
 
 export const DEFAULT_ROOM_SETTINGS = {
-  rounds: 8,
+  rounds: 10,
   questionTimerSeconds: 25,
-  challengeSelectionSeconds: 8,
+  challengeSelectionSeconds: 20,
   savingGraceCategorySeconds: 5,
   savingGraceAnswerSeconds: 10,
   lambSelectionSeconds: 5,
@@ -16,10 +16,10 @@ export const DEFAULT_ROOM_SETTINGS = {
 } as const;
 
 export const TEAM_PALETTE = [
-  { name: "Team Neon", color: "#00D1FF", icon: "N" },
-  { name: "Team Solar", color: "#FFC857", icon: "S" },
-  { name: "Team Flux", color: "#8B5CF6", icon: "F" },
-  { name: "Team Pulse", color: "#FF4D8D", icon: "P" },
+  { name: "Green Team", color: "#22C55E", icon: "G" },
+  { name: "Yellow Team", color: "#FACC15", icon: "Y" },
+  { name: "Red Team", color: "#EF4444", icon: "R" },
+  { name: "Blue Team", color: "#3B82F6", icon: "B" },
   { name: "Team Lime", color: "#7ED957", icon: "L" },
   { name: "Team Ember", color: "#FF7A1A", icon: "E" },
   { name: "Team Aqua", color: "#2DD4BF", icon: "A" },

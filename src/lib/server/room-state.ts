@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getJoinUrl, SOFT_PLAYER_CAP } from "@/lib/config";
+import { readSettings } from "@/lib/server/game-utils";
 import type {
   AnswerOption,
   GamePhase,
@@ -20,6 +21,7 @@ interface RoomRow {
   phase: GamePhase;
   team_count: number;
   current_round_number: number;
+  settings: Record<string, unknown>;
   phase_started_at: string | null;
   phase_ends_at: string | null;
   is_paused: boolean;
@@ -87,15 +89,18 @@ interface PenaltyRow {
   team_id: string;
   lamb_player_id: string | null;
   rescuer_player_id: string | null;
-  consequence_choice: "DRINK" | "CHALLENGE" | null;
+  consequence_choice: "DRINK" | "FLIP" | "CHALLENGE" | null;
   challenge_assignment_id: string | null;
   status: string;
   queue_index: number;
+  payload: Record<string, unknown>;
 }
 
 interface AssignmentChallengeRow {
   id: string;
+  chooser_team_id: string;
   target_team_id: string;
+  challenge_id: string | null;
   challenges:
     | {
         title: string;
@@ -169,6 +174,7 @@ export function buildPublicRoomState(
     phase: room.phase,
     teamCount: room.team_count,
     currentRoundNumber: room.current_round_number,
+    totalRounds: readSettings(room.settings).rounds,
     version,
     updatedAt: new Date().toISOString(),
     createdAt: room.created_at,
@@ -223,6 +229,12 @@ export function buildPublicRoomState(
     "ROUND_COMPLETE",
     "FINAL_RESULTS",
   ];
+  const challengeAssignmentByChooserTeamId = new Map(
+    gameData.assignmentChallenges.map((assignment) => [
+      assignment.chooser_team_id,
+      assignment,
+    ]),
+  );
 
   state.leaders = gameData.leaders
     .map((leader) => {
@@ -269,6 +281,7 @@ export function buildPublicRoomState(
     state.voteProgress = {
       submitted: new Set(gameData.votes.map((vote) => vote.player_id)).size,
       eligible,
+      submittedPlayerIds: [...new Set(gameData.votes.map((vote) => vote.player_id))],
     };
   }
 
@@ -342,7 +355,7 @@ export function buildPublicRoomState(
 
   if (gameData.penalties.length > 0) {
     const firstIncomplete = gameData.penalties.find(
-      (penalty) => penalty.status !== "complete",
+      (penalty) => penalty.status !== "complete" && penalty.status !== "selection",
     );
     const penalties: PenaltyPublic[] = gameData.penalties.map((penalty) => {
       const team = teamsWithPlayers.find((item) => item.id === penalty.team_id);
@@ -361,6 +374,15 @@ export function buildPublicRoomState(
         "pie_confirmation",
         "complete",
       ].includes(penalty.status);
+      const consequenceChoices =
+        penalty.payload &&
+        typeof penalty.payload.consequenceChoices === "object" &&
+        !Array.isArray(penalty.payload.consequenceChoices)
+          ? (penalty.payload.consequenceChoices as Record<string, unknown>)
+          : {};
+      const chooserAssignment = challengeAssignmentByChooserTeamId.get(
+        penalty.team_id,
+      );
 
       return {
         id: penalty.id,
@@ -370,12 +392,21 @@ export function buildPublicRoomState(
         teamColor: team?.color || "#ffffff",
         lambPlayerId: lamb?.id || null,
         lambName: lamb?.displayName || null,
+        lambInitials: lamb?.initials || null,
+        lambAvatarUrl: lamb?.avatarUrl || null,
         rescuerPlayerId: rescuer?.id || null,
         rescuerName: rescuer?.displayName || null,
+        rescuerInitials: rescuer?.initials || null,
+        rescuerAvatarUrl: rescuer?.avatarUrl || null,
         consequenceChoice: penalty.consequence_choice,
         status: penalty.status,
         queueIndex: penalty.queue_index,
         isActive: firstIncomplete?.id === penalty.id,
+        selection: {
+          lambSelected: Boolean(penalty.lamb_player_id),
+          challengeSelected: Boolean(chooserAssignment?.challenge_id),
+          consequencePlayerIds: Object.keys(consequenceChoices),
+        },
         ...(challengeVisible && assignment?.challenges
           ? {
               challenge: {
@@ -409,7 +440,7 @@ export async function rebuildPublicRoomState(roomId: string) {
   const { data: room, error: roomError } = await supabase
     .from("rooms")
     .select(
-      "id, room_code, title, phase, team_count, current_round_number, phase_started_at, phase_ends_at, is_paused, remaining_ms_when_paused, created_at, updated_at",
+      "id, room_code, title, phase, team_count, current_round_number, settings, phase_started_at, phase_ends_at, is_paused, remaining_ms_when_paused, created_at, updated_at",
     )
     .eq("id", roomId)
     .single<RoomRow>();
@@ -502,7 +533,7 @@ export async function rebuildPublicRoomState(roomId: string) {
         supabase
           .from("penalties")
           .select(
-            "id, team_id, lamb_player_id, rescuer_player_id, consequence_choice, challenge_assignment_id, status, queue_index",
+            "id, team_id, lamb_player_id, rescuer_player_id, consequence_choice, challenge_assignment_id, status, queue_index, payload",
           )
           .eq("round_id", round.id)
           .order("queue_index", { ascending: true })
@@ -510,7 +541,7 @@ export async function rebuildPublicRoomState(roomId: string) {
         supabase
           .from("challenge_assignments")
           .select(
-            "id, target_team_id, challenges(title, instructions, duration_seconds, success_criteria)",
+            "id, chooser_team_id, target_team_id, challenge_id, challenges(title, instructions, duration_seconds, success_criteria)",
           )
           .eq("round_id", round.id),
       ]);

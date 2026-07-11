@@ -4,6 +4,7 @@ import { randomInt } from "crypto";
 import { DEFAULT_ROOM_SETTINGS } from "@/lib/config";
 import type {
   AnswerOption,
+  ConsequenceChoice,
   GamePhase,
   SavingGraceCategory,
   TeamScoreResult,
@@ -120,6 +121,18 @@ export function randomSample<T>(items: T[], count: number) {
   }
 
   return selected;
+}
+
+export function consequenceQuotas(rounds: number): Record<ConsequenceChoice, number> {
+  const safeRounds = Math.max(1, Math.floor(rounds));
+  const base = Math.floor(safeRounds / 3);
+  const remainder = safeRounds % 3;
+
+  return {
+    CHALLENGE: base + (remainder >= 1 ? 1 : 0),
+    DRINK: base + (remainder >= 2 ? 1 : 0),
+    FLIP: base,
+  };
 }
 
 export function computeTeamScores(

@@ -7,14 +7,16 @@
   --game-card: #131725;
   --game-card-strong: #1b2134;
   --game-border: rgba(255, 255, 255, 0.1);
-  --team-one: #00d1ff;
-  --team-two: #ffc857;
-  --team-three: #8b5cf6;
-  --team-four: #ff4d8d;
+  --team-one: #22c55e;
+  --team-two: #facc15;
+  --team-three: #ef4444;
+  --team-four: #3b82f6;
   --team-five: #7ed957;
   --team-six: #ff7a1a;
   --team-seven: #2dd4bf;
   --team-eight: #f5e642;
+  --game-comic-font: "Komika", "Comic Sans MS", "Trebuchet MS", sans-serif;
+  --step-two-gradient: linear-gradient(180deg, #65359a 0%, #78c5ff 100%);
 }
 
 @theme inline {

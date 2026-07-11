@@ -18,7 +18,9 @@ export async function POST(
 
   const body = await readJsonObject(request);
   const choice =
-    body?.choice === "DRINK" || body?.choice === "CHALLENGE"
+    body?.choice === "DRINK" ||
+    body?.choice === "FLIP" ||
+    body?.choice === "CHALLENGE"
       ? (body.choice as ConsequenceChoice)
       : null;
 

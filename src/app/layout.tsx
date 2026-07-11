@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Who Said That?",
+  title: "Who Said?",
   description: "A realtime multi-team group-chat quote guessing game.",
 };
 

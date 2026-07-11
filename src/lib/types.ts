@@ -35,7 +35,7 @@ export type SavingGraceCategory =
   | "NEXT_SENDER"
   | "REACTION_COUNT";
 
-export type ConsequenceChoice = "DRINK" | "CHALLENGE";
+export type ConsequenceChoice = "DRINK" | "FLIP" | "CHALLENGE";
 
 export type HostAction =
   | "LOCK_TEAMS"
@@ -118,6 +118,7 @@ export interface RoundLeaderPublic {
 export interface VoteProgressPublic {
   submitted: number;
   eligible: number;
+  submittedPlayerIds?: string[];
 }
 
 export interface SavingGracePublic {
@@ -143,12 +144,21 @@ export interface PenaltyPublic {
   teamColor: string;
   lambPlayerId: string | null;
   lambName: string | null;
+  lambInitials: string | null;
+  lambAvatarUrl: string | null;
   rescuerPlayerId: string | null;
   rescuerName: string | null;
+  rescuerInitials: string | null;
+  rescuerAvatarUrl: string | null;
   consequenceChoice: ConsequenceChoice | null;
   status: string;
   queueIndex: number;
   isActive: boolean;
+  selection?: {
+    lambSelected: boolean;
+    challengeSelected: boolean;
+    consequencePlayerIds: string[];
+  };
   challenge?: {
     title: string;
     instructions: string;
@@ -193,6 +203,7 @@ export interface PublicRoomState {
   phase: GamePhase;
   teamCount: number;
   currentRoundNumber: number;
+  totalRounds: number;
   version: number;
   updatedAt: string;
   createdAt: string;
@@ -247,6 +258,8 @@ export interface PlayerPrivateState {
       durationSeconds: number;
       successCriteria: string;
     }>;
+    selectedChallengeId?: string | null;
+    selectedLambPlayerId?: string | null;
     savingGraceCategories?: SavingGraceCategory[];
     savingGraceQuestion?: {
       category: SavingGraceCategory;
@@ -255,6 +268,8 @@ export interface PlayerPrivateState {
     };
     lambOptions?: PlayerPublic[];
     consequenceOptions?: ConsequenceChoice[];
+    consequenceRemaining?: Record<ConsequenceChoice, number>;
+    myConsequenceChoice?: ConsequenceChoice | null;
     rescuerOptions?: PlayerPublic[];
   };
 }

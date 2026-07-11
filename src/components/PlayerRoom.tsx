@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
   playerTokenKey,
   readStoredToken,
 } from "@/lib/client-storage";
+import { resizeAvatar } from "@/lib/client-avatar";
 import { usePublicRoomState } from "@/lib/use-public-room-state";
 import { useSyncedTimer } from "@/lib/use-synced-timer";
 import { Avatar } from "@/components/Avatar";
@@ -38,8 +39,21 @@ const categoryLabels: Record<SavingGraceCategory, string> = {
 
 const consequenceLabels: Record<ConsequenceChoice, string> = {
   DRINK: "Drink",
+  FLIP: "Flip",
   CHALLENGE: "Challenge",
 };
+
+const punishmentPhases: PublicRoomState["phase"][] = [
+  "DRINK_CONFIRMATION",
+  "CHALLENGE_REVEAL",
+  "CHALLENGE_ACTIVE",
+  "BOTTLE_FLIP_ACTIVE",
+  "PIE_CONFIRMATION",
+];
+
+function isPunishmentPhase(phase: PublicRoomState["phase"]) {
+  return punishmentPhases.includes(phase);
+}
 
 function actionPath(roomCode: string, path: string) {
   return `/api/rooms/${encodeURIComponent(roomCode)}${path}`;
@@ -69,45 +83,6 @@ function getRoleMessage(playerState: PlayerPrivateState, publicState: PublicRoom
   }
 
   return playerState.message;
-}
-
-async function resizeAvatar(file: File) {
-  const imageUrl = URL.createObjectURL(file);
-
-  try {
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error("Could not read that image."));
-      img.src = imageUrl;
-    });
-
-    const size = Math.min(image.naturalWidth, image.naturalHeight);
-    const sourceX = Math.max(0, (image.naturalWidth - size) / 2);
-    const sourceY = Math.max(0, (image.naturalHeight - size) / 2);
-    const canvas = document.createElement("canvas");
-    canvas.width = 512;
-    canvas.height = 512;
-    const context = canvas.getContext("2d");
-
-    if (!context) {
-      throw new Error("Canvas is not available in this browser.");
-    }
-
-    context.drawImage(image, sourceX, sourceY, size, size, 0, 0, 512, 512);
-
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob(resolve, "image/webp", 0.82);
-    });
-
-    if (!blob) {
-      throw new Error("Could not compress that image.");
-    }
-
-    return new File([blob], "avatar.webp", { type: "image/webp" });
-  } finally {
-    URL.revokeObjectURL(imageUrl);
-  }
 }
 
 function OptionButton({
@@ -176,6 +151,248 @@ function PlayerPickButton({
   );
 }
 
+function TeamMemberCard({ player }: { player: PlayerPublic }) {
+  return (
+    <div className="grid aspect-square min-h-28 place-items-center rounded-[1.25rem] border border-white/10 bg-white/[0.06] p-3 text-center">
+      <Avatar player={player} size="lg" />
+      <div className="mt-3 w-full truncate text-sm font-black text-white">
+        {player.displayName}
+      </div>
+    </div>
+  );
+}
+
+function StepTwoTopBar({
+  state,
+  team,
+  seconds,
+}: {
+  state: PublicRoomState;
+  team: PlayerPrivateState["team"];
+  seconds: number | null;
+}) {
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      <div className="grid min-h-20 place-items-center rounded-[1.25rem] bg-white px-3 text-center text-black shadow-[0_12px_30px_rgba(0,0,0,0.12)]">
+        <div>
+          <div className="text-xs font-black uppercase text-black/45">Round</div>
+          <div
+            className="text-2xl font-black"
+            style={{ fontFamily: "var(--game-comic-font)" }}
+          >
+            {state.currentRoundNumber}/{state.totalRounds}
+          </div>
+        </div>
+      </div>
+      <div className="grid min-h-20 place-items-center rounded-[1.25rem] bg-white px-3 text-center text-black shadow-[0_12px_30px_rgba(0,0,0,0.12)]">
+        <div>
+          <div className="text-xs font-black uppercase text-black/45">Timer</div>
+          <div
+            className="text-4xl font-black leading-none"
+            style={{ fontFamily: "var(--game-comic-font)" }}
+          >
+            {String(seconds ?? 0).padStart(2, "0")}
+          </div>
+        </div>
+      </div>
+      <div className="grid min-h-20 place-items-center rounded-[1.25rem] bg-white px-3 text-center text-black shadow-[0_12px_30px_rgba(0,0,0,0.12)]">
+        <div>
+          <div className="text-xs font-black uppercase text-black/45">Points</div>
+          <div
+            className="text-2xl font-black"
+            style={{ fontFamily: "var(--game-comic-font)" }}
+          >
+            {team?.score || 0}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StepTwoPrompt({ children }: { children: ReactNode }) {
+  return (
+    <div className="grid min-h-48 place-items-center rounded-[1.75rem] bg-white p-6 text-center text-black shadow-[0_18px_45px_rgba(0,0,0,0.14)]">
+      <h1
+        className="text-3xl font-black leading-tight sm:text-4xl"
+        style={{ fontFamily: "var(--game-comic-font)" }}
+      >
+        {children}
+      </h1>
+    </div>
+  );
+}
+
+function StepTwoPlayerOption({
+  player,
+  selected,
+  onClick,
+}: {
+  player: PlayerPublic;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`grid min-h-40 place-items-center rounded-[1.35rem] border-4 bg-white p-3 text-center transition ${
+        selected ? "border-purple-700 shadow-[0_0_0_6px_rgba(126,34,206,0.22)]" : "border-white"
+      }`}
+    >
+      <Avatar player={player} size="lg" />
+      <span
+        className={`mt-3 w-full truncate text-lg font-black ${
+          selected ? "text-purple-700" : "text-black"
+        }`}
+        style={{ fontFamily: "var(--game-comic-font)" }}
+      >
+        {player.displayName}
+      </span>
+    </button>
+  );
+}
+
+function StepTwoChoiceButton({
+  label,
+  remaining,
+  selected,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  remaining?: number;
+  selected: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`min-h-24 rounded-[1.35rem] border-4 px-4 text-2xl font-black text-black transition disabled:cursor-not-allowed disabled:opacity-45 ${
+        selected
+          ? "border-purple-700 bg-white shadow-[0_0_0_6px_rgba(126,34,206,0.22)]"
+          : "border-white bg-white/92"
+      }`}
+      style={{ fontFamily: "var(--game-comic-font)" }}
+    >
+      <span className="block">{label}</span>
+      {typeof remaining === "number" ? (
+        <span className="mt-1 block text-sm font-black text-black/45">
+          {remaining} left
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+type LeaderChallengeOption = NonNullable<
+  NonNullable<PlayerPrivateState["actions"]>["leaderChallengeOptions"]
+>[number];
+
+function StepTwoChallengeOption({
+  challenge,
+  selected,
+  onClick,
+}: {
+  challenge: LeaderChallengeOption;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-[1.35rem] border-4 bg-white p-4 text-left text-black transition ${
+        selected ? "border-purple-700 shadow-[0_0_0_6px_rgba(126,34,206,0.22)]" : "border-white"
+      }`}
+    >
+      <div
+        className="text-xl font-black"
+        style={{ fontFamily: "var(--game-comic-font)" }}
+      >
+        {challenge.title}
+      </div>
+      <div className="mt-2 text-sm font-bold leading-6 text-black/65">
+        {challenge.instructions}
+      </div>
+    </button>
+  );
+}
+
+function QuestionAnswerCard({
+  option,
+  selected,
+  onClick,
+}: {
+  option: AnswerOption;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const player = {
+    displayName: option.name,
+    initials: option.name
+      .split(/\s+/)
+      .map((part) => part[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase(),
+    avatarUrl: option.avatarUrl || null,
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`grid min-h-40 place-items-center rounded-[1.35rem] border-4 bg-white p-3 text-center transition ${
+        selected ? "border-purple-700 shadow-[0_0_0_6px_rgba(126,34,206,0.22)]" : "border-white"
+      }`}
+    >
+      <Avatar player={player} size="lg" />
+      <span
+        className={`mt-3 w-full truncate text-lg font-black ${
+          selected ? "text-purple-700" : "text-black"
+        }`}
+        style={{ fontFamily: "var(--game-comic-font)" }}
+      >
+        {option.name}
+      </span>
+    </button>
+  );
+}
+
+type RoundResultTeam = NonNullable<PublicRoomState["roundResults"]>["teams"][number];
+
+function playerOutcomeCopy(result: RoundResultTeam | undefined) {
+  if (!result || result.outcome === "draw") {
+    return {
+      title: "This round was a draw",
+      detail: "No team takes this one.",
+    };
+  }
+
+  if (result.outcome === "winner") {
+    return {
+      title: "Your team won this round",
+      detail: "+10 points",
+    };
+  }
+
+  if (result.outcome === "last") {
+    return {
+      title: "Your team lost",
+      detail: "Punishment is coming.",
+    };
+  }
+
+  return {
+    title: "Your group is mid",
+    detail: "You are safe this round.",
+  };
+}
+
 export function PlayerRoom({ roomCode }: PlayerRoomProps) {
   const normalizedRoomCode = roomCode.toUpperCase();
   const [playerState, setPlayerState] = useState<PlayerStateResponse | null>(
@@ -185,6 +402,11 @@ export function PlayerRoom({ roomCode }: PlayerRoomProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [selectedStepTwoLambId, setSelectedStepTwoLambId] = useState("");
+  const [selectedStepTwoChallengeId, setSelectedStepTwoChallengeId] = useState("");
+  const [selectedStepTwoConsequence, setSelectedStepTwoConsequence] =
+    useState<ConsequenceChoice | "">("");
+  const [selectedQuestionVoteId, setSelectedQuestionVoteId] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastPrivateSyncVersionRef = useRef<number | null>(null);
   const tokenKey = useMemo(
@@ -199,6 +421,7 @@ export function PlayerRoom({ roomCode }: PlayerRoomProps) {
   const typedPlayerState =
     playerState?.player && playerState.room ? (playerState as PlayerPrivateState) : null;
   const timer = useSyncedTimer(publicState?.timer);
+  const actions = typedPlayerState?.actions || {};
 
   async function loadPlayerState(options: { quiet?: boolean } = {}) {
     const playerToken = readStoredToken(tokenKey);
@@ -375,12 +598,458 @@ export function PlayerRoom({ roomCode }: PlayerRoomProps) {
     );
   }
 
-  const actions = typedPlayerState?.actions || {};
+  if (
+    typedPlayerState &&
+    publicState &&
+    (publicState.phase === "LOBBY" || publicState.phase === "TEAM_SETUP")
+  ) {
+    const team = typedPlayerState.team;
+
+    return (
+      <main className="mx-auto grid min-h-dvh w-full max-w-xl content-start gap-7 px-4 py-8">
+        {error ? (
+          <div className="rounded-[1.25rem] border border-red-300/30 bg-red-500/10 p-4 font-semibold text-red-100">
+            {error}
+          </div>
+        ) : null}
+
+        <section className="pt-4 text-center">
+          <div className="text-sm font-black uppercase tracking-[0.24em] text-white/45">
+            Waiting for game to start
+          </div>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={busyAction === "AVATAR"}
+            className="mx-auto mt-6 rounded-full disabled:opacity-60"
+            aria-label="Upload avatar"
+          >
+            <Avatar player={typedPlayerState.player} size="lg" />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="user"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+
+              if (file) {
+                void uploadAvatar(file);
+              }
+            }}
+          />
+          <h1 className="mt-5 text-3xl font-black leading-tight text-white">
+            You are in{" "}
+            <span style={{ color: team?.color || "#ffffff" }}>
+              {team?.name || "a team"}
+            </span>
+          </h1>
+          {busyAction === "AVATAR" ? (
+            <div className="mt-3 text-sm font-bold text-white/50">
+              Uploading photo...
+            </div>
+          ) : null}
+        </section>
+
+        <section className="grid gap-3">
+          <h2 className="text-base font-black text-white">Team members</h2>
+          {team?.players.length ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {team.players.map((player) => (
+                <TeamMemberCard key={player.id} player={player} />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-[1.25rem] border border-white/10 bg-[var(--game-card)] p-5 text-center font-bold text-white/55">
+              Waiting for players to join
+            </div>
+          )}
+        </section>
+      </main>
+    );
+  }
+
+  if (
+    typedPlayerState &&
+    publicState &&
+    publicState.phase === "CHALLENGE_SELECTION"
+  ) {
+    const isLeader = typedPlayerState.role === "leader";
+    const lambDone = Boolean(actions.selectedLambPlayerId);
+    const challengeDone = Boolean(actions.selectedChallengeId);
+    const selectedLambId =
+      selectedStepTwoLambId || actions.selectedLambPlayerId || "";
+    const selectedChallengeId =
+      selectedStepTwoChallengeId || actions.selectedChallengeId || "";
+    const selectedConsequence =
+      selectedStepTwoConsequence || actions.myConsequenceChoice || "";
+    const challenge = actions.leaderChallengeOptions?.find(
+      (option) => option.challengeId === selectedChallengeId,
+    );
+    const leaderWaiting = isLeader && lambDone && challengeDone;
+    const playerWaiting = !isLeader && Boolean(actions.myConsequenceChoice);
+
+    return (
+      <main
+        className="min-h-dvh px-4 py-6 text-black"
+        style={{ background: "var(--step-two-gradient)" }}
+      >
+        <div className="mx-auto grid w-full max-w-3xl gap-6">
+          <StepTwoTopBar
+            state={publicState}
+            team={typedPlayerState.team}
+            seconds={timer.seconds}
+          />
+
+          {error ? (
+            <div className="rounded-[1.25rem] border border-red-200 bg-white px-4 py-3 font-bold text-red-700">
+              {error}
+            </div>
+          ) : null}
+
+          {isLeader ? (
+            <div className="text-center">
+              <div
+                className="text-xl font-black text-white drop-shadow"
+                style={{ fontFamily: "var(--game-comic-font)" }}
+              >
+                You are the group leader
+              </div>
+            </div>
+          ) : null}
+
+          {isLeader && !lambDone ? (
+            <>
+              <StepTwoPrompt>Pick a sacrificial lamb</StepTwoPrompt>
+              <section className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {(actions.lambOptions || []).map((player) => (
+                  <StepTwoPlayerOption
+                    key={player.id}
+                    player={player}
+                    selected={selectedLambId === player.id}
+                    onClick={() => setSelectedStepTwoLambId(player.id)}
+                  />
+                ))}
+              </section>
+              <button
+                type="button"
+                disabled={!selectedLambId || Boolean(busyAction)}
+                onClick={() =>
+                  void postPlayer(
+                    "/leader/sacrificial-lamb",
+                    { lambPlayerId: selectedLambId },
+                    `LAMB_${selectedLambId}`,
+                  )
+                }
+                className="h-16 rounded-[1.25rem] bg-purple-700 px-6 text-2xl font-black text-white shadow-[0_18px_40px_rgba(80,20,140,0.35)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ fontFamily: "var(--game-comic-font)" }}
+              >
+                {busyAction?.startsWith("LAMB_") ? "Saving..." : "Done"}
+              </button>
+            </>
+          ) : null}
+
+          {isLeader && lambDone && !challengeDone ? (
+            <>
+              <StepTwoPrompt>Pick a challenge</StepTwoPrompt>
+              <section className="grid gap-3">
+                {(actions.leaderChallengeOptions || []).map((option) => (
+                  <StepTwoChallengeOption
+                    key={option.challengeId}
+                    challenge={option}
+                    selected={selectedChallengeId === option.challengeId}
+                    onClick={() => setSelectedStepTwoChallengeId(option.challengeId)}
+                  />
+                ))}
+              </section>
+              <button
+                type="button"
+                disabled={!challenge || Boolean(busyAction)}
+                onClick={() =>
+                  challenge
+                    ? void postPlayer(
+                        "/leader/challenge",
+                        {
+                          assignmentId: challenge.assignmentId,
+                          challengeId: challenge.challengeId,
+                        },
+                        `CHALLENGE_${challenge.challengeId}`,
+                      )
+                    : undefined
+                }
+                className="h-16 rounded-[1.25rem] bg-purple-700 px-6 text-2xl font-black text-white shadow-[0_18px_40px_rgba(80,20,140,0.35)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ fontFamily: "var(--game-comic-font)" }}
+              >
+                {busyAction?.startsWith("CHALLENGE_") ? "Saving..." : "Done"}
+              </button>
+            </>
+          ) : null}
+
+          {!isLeader && !playerWaiting ? (
+            <>
+              <StepTwoPrompt>Pick your punishment</StepTwoPrompt>
+              <section className="grid gap-3 sm:grid-cols-3">
+                {(actions.consequenceOptions || []).map((choice) => (
+                  <StepTwoChoiceButton
+                    key={choice}
+                    label={consequenceLabels[choice]}
+                    remaining={actions.consequenceRemaining?.[choice]}
+                    selected={selectedConsequence === choice}
+                    disabled={actions.consequenceRemaining?.[choice] === 0}
+                    onClick={() => setSelectedStepTwoConsequence(choice)}
+                  />
+                ))}
+              </section>
+              <button
+                type="button"
+                disabled={!selectedConsequence || Boolean(busyAction)}
+                onClick={() =>
+                  selectedConsequence
+                    ? void postPlayer(
+                        "/player/consequence",
+                        { choice: selectedConsequence },
+                        `CONSEQUENCE_${selectedConsequence}`,
+                      )
+                    : undefined
+                }
+                className="h-16 rounded-[1.25rem] bg-purple-700 px-6 text-2xl font-black text-white shadow-[0_18px_40px_rgba(80,20,140,0.35)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ fontFamily: "var(--game-comic-font)" }}
+              >
+                {busyAction?.startsWith("CONSEQUENCE_") ? "Saving..." : "Done"}
+              </button>
+            </>
+          ) : null}
+
+          {leaderWaiting || playerWaiting ? (
+            <StepTwoPrompt>Waiting for player selection</StepTwoPrompt>
+          ) : null}
+        </div>
+      </main>
+    );
+  }
+
   const currentQuestion = publicState?.question;
   const selectedVote = typedPlayerState?.myVote || null;
   const submittedVoteName = actions.answerOptions?.find(
     (option) => option.id === selectedVote,
   )?.name;
+
+  if (
+    typedPlayerState &&
+    publicState &&
+    publicState.phase === "QUESTION_ACTIVE" &&
+    currentQuestion
+  ) {
+    const voteId = selectedQuestionVoteId || selectedVote || "";
+    const selectedAnswer = actions.answerOptions?.find(
+      (option) => option.id === voteId,
+    );
+
+    return (
+      <main
+        className="min-h-dvh px-4 py-6 text-black"
+        style={{ background: "var(--step-two-gradient)" }}
+      >
+        <div className="mx-auto grid w-full max-w-3xl gap-6">
+          <StepTwoTopBar
+            state={publicState}
+            team={typedPlayerState.team}
+            seconds={timer.seconds}
+          />
+
+          {error ? (
+            <div className="rounded-[1.25rem] border border-red-200 bg-white px-4 py-3 font-bold text-red-700">
+              {error}
+            </div>
+          ) : null}
+
+          <div
+            className="text-center text-3xl font-black text-white drop-shadow"
+            style={{ fontFamily: "var(--game-comic-font)" }}
+          >
+            Who Said?
+          </div>
+
+          <StepTwoPrompt>{currentQuestion.quote}</StepTwoPrompt>
+
+          {selectedVote ? (
+            <StepTwoPrompt>Waiting for review</StepTwoPrompt>
+          ) : (
+            <>
+              <section className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {(actions.answerOptions || []).map((option) => (
+                  <QuestionAnswerCard
+                    key={option.id}
+                    option={option}
+                    selected={voteId === option.id}
+                    onClick={() => setSelectedQuestionVoteId(option.id)}
+                  />
+                ))}
+              </section>
+              <button
+                type="button"
+                disabled={!selectedAnswer || Boolean(busyAction)}
+                onClick={() =>
+                  selectedAnswer
+                    ? void postPlayer(
+                        "/vote",
+                        { answerId: selectedAnswer.id },
+                        `VOTE_${selectedAnswer.id}`,
+                      )
+                    : undefined
+                }
+                className="h-16 rounded-[1.25rem] bg-purple-700 px-6 text-2xl font-black text-white shadow-[0_18px_40px_rgba(80,20,140,0.35)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ fontFamily: "var(--game-comic-font)" }}
+              >
+                {busyAction?.startsWith("VOTE_") ? "Saving..." : "Done"}
+              </button>
+            </>
+          )}
+        </div>
+      </main>
+    );
+  }
+
+  if (
+    typedPlayerState &&
+    publicState &&
+    (publicState.phase === "ANSWER_REVEAL" || publicState.phase === "ROUND_DRAW") &&
+    publicState.roundResults
+  ) {
+    const result = publicState.roundResults.teams.find(
+      (team) => team.teamId === typedPlayerState.team?.id,
+    );
+    const copy = playerOutcomeCopy(result);
+
+    return (
+      <main
+        className="min-h-dvh px-4 py-6 text-black"
+        style={{ background: "var(--step-two-gradient)" }}
+      >
+        <div className="mx-auto grid min-h-[calc(100dvh-3rem)] w-full max-w-3xl content-center gap-6">
+          {error ? (
+            <div className="rounded-[1.25rem] border border-red-200 bg-white px-4 py-3 font-bold text-red-700">
+              {error}
+            </div>
+          ) : null}
+
+          <section className="grid grid-cols-2 gap-3">
+            <div className="grid min-h-20 place-items-center rounded-[1.25rem] bg-white px-3 text-center text-black shadow-[0_12px_30px_rgba(0,0,0,0.12)]">
+              <div>
+                <div className="text-xs font-black uppercase text-black/45">Round</div>
+                <div
+                  className="text-2xl font-black"
+                  style={{ fontFamily: "var(--game-comic-font)" }}
+                >
+                  {publicState.currentRoundNumber}/{publicState.totalRounds}
+                </div>
+              </div>
+            </div>
+            <div className="grid min-h-20 place-items-center rounded-[1.25rem] bg-white px-3 text-center text-black shadow-[0_12px_30px_rgba(0,0,0,0.12)]">
+              <div>
+                <div className="text-xs font-black uppercase text-black/45">Points</div>
+                <div
+                  className="text-2xl font-black"
+                  style={{ fontFamily: "var(--game-comic-font)" }}
+                >
+                  {typedPlayerState.team?.score || 0}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="grid min-h-72 place-items-center rounded-[1.75rem] bg-white p-6 text-center text-black shadow-[0_18px_45px_rgba(0,0,0,0.14)]">
+            <div>
+              <h1
+                className="text-4xl font-black leading-tight sm:text-6xl"
+                style={{ fontFamily: "var(--game-comic-font)" }}
+              >
+                {copy.title}
+              </h1>
+              <div
+                className="mt-5 text-3xl font-black text-purple-700"
+                style={{ fontFamily: "var(--game-comic-font)" }}
+              >
+                {copy.detail}
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    );
+  }
+
+  if (
+    typedPlayerState &&
+    publicState &&
+    isPunishmentPhase(publicState.phase)
+  ) {
+    return (
+      <main
+        className="min-h-dvh px-4 py-6 text-black"
+        style={{ background: "var(--step-two-gradient)" }}
+      >
+        <div className="mx-auto grid min-h-[calc(100dvh-3rem)] w-full max-w-3xl content-center gap-6">
+          <section className="grid min-h-72 place-items-center rounded-[1.75rem] bg-white p-6 text-center text-black shadow-[0_18px_45px_rgba(0,0,0,0.14)]">
+            <div>
+              <h1
+                className="text-4xl font-black leading-tight sm:text-6xl"
+                style={{ fontFamily: "var(--game-comic-font)" }}
+              >
+                Waiting for punishments
+              </h1>
+              <div className="mt-4 font-black text-black/45">
+                Watch the game master screen.
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    );
+  }
+
+  if (
+    typedPlayerState &&
+    publicState &&
+    publicState.phase === "FINAL_RESULTS"
+  ) {
+    const winners = publicState.leaderboard.filter((team) =>
+      publicState.finalWinnerTeamIds?.includes(team.teamId),
+    );
+    const winnerNames = winners.map((team) => team.name).join(", ") || "No winner";
+    const myTeamWon = Boolean(
+      typedPlayerState.team &&
+        publicState.finalWinnerTeamIds?.includes(typedPlayerState.team.id),
+    );
+
+    return (
+      <main
+        className="min-h-dvh px-4 py-6 text-black"
+        style={{ background: "var(--step-two-gradient)" }}
+      >
+        <div className="mx-auto grid min-h-[calc(100dvh-3rem)] w-full max-w-3xl content-center gap-6">
+          <section className="grid min-h-72 place-items-center rounded-[1.75rem] bg-white p-6 text-center text-black shadow-[0_18px_45px_rgba(0,0,0,0.14)]">
+            <div>
+              <h1
+                className="text-4xl font-black leading-tight sm:text-6xl"
+                style={{ fontFamily: "var(--game-comic-font)" }}
+              >
+                {winnerNames}
+              </h1>
+              <div
+                className="mt-5 text-3xl font-black text-purple-700"
+                style={{ fontFamily: "var(--game-comic-font)" }}
+              >
+                {myTeamWon ? "Your team won the game" : "won the game"}
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="mx-auto grid min-h-dvh w-full max-w-5xl gap-5 px-4 py-5">
@@ -627,7 +1296,7 @@ export function PlayerRoom({ roomCode }: PlayerRoomProps) {
             <StateBadge label="Sacrificial Lamb" tone="pink" />
             <StateBadge label="Leader Chooses" tone="cyan" />
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             {actions.lambOptions.map((player) => (
               <PlayerPickButton
                 key={player.id}
@@ -651,7 +1320,7 @@ export function PlayerRoom({ roomCode }: PlayerRoomProps) {
           <div className="mb-3 flex flex-wrap gap-2">
             <StateBadge label="Choose Consequence" tone="pink" />
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             {actions.consequenceOptions.map((choice) => (
               <button
                 key={choice}
