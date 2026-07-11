@@ -759,7 +759,10 @@ export function PlayerRoom({ roomCode }: PlayerRoomProps) {
 
           {isLeader && lambDone && !challengeDone ? (
             <>
-              <StepTwoPrompt>Pick a challenge</StepTwoPrompt>
+              <StepTwoPrompt>
+                Pick a challenge for{" "}
+                {actions.leaderChallengeOptions?.[0]?.targetTeamName || "their group"}
+              </StepTwoPrompt>
               <section className="grid gap-3">
                 {(actions.leaderChallengeOptions || []).map((option) => (
                   <StepTwoChallengeOption
@@ -1206,6 +1209,10 @@ export function PlayerRoom({ roomCode }: PlayerRoomProps) {
           <div className="mb-3 flex flex-wrap gap-2">
             <StateBadge label="Group Leader" tone="pink" />
             <StateBadge label="Choose Challenge" tone="cyan" />
+            <StateBadge
+              label={`For ${actions.leaderChallengeOptions[0].targetTeamName}`}
+              tone="yellow"
+            />
           </div>
           <div className="grid gap-3">
             {actions.leaderChallengeOptions.map((challenge) => (

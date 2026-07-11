@@ -198,12 +198,14 @@ export async function GET(
     const [{ data: assignment }, { data: penalty }] = await Promise.all([
       supabase
         .from("challenge_assignments")
-        .select("id, challenge_id, options")
+        .select("id, challenge_id, target_team_id, teams!challenge_assignments_target_team_id_fkey(name), options")
         .eq("round_id", round.id)
         .eq("chooser_team_id", player.team_id)
         .maybeSingle<{
           id: string;
           challenge_id: string | null;
+          target_team_id: string;
+          teams: { name: string } | null;
           options: Array<{
             id: string;
             title: string;
@@ -234,6 +236,8 @@ export async function GET(
         ? assignment.options.map((option) => ({
             assignmentId: assignment.id,
             challengeId: option.id,
+            targetTeamId: assignment.target_team_id,
+            targetTeamName: assignment.teams?.name || "their group",
             title: option.title,
             instructions: option.instructions,
             durationSeconds: option.durationSeconds,

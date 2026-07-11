@@ -274,6 +274,8 @@ export interface PlayerPrivateState {
     leaderChallengeOptions?: Array<{
       assignmentId: string;
       challengeId: string;
+      targetTeamId: string;
+      targetTeamName: string;
       title: string;
       instructions: string;
       durationSeconds: number;

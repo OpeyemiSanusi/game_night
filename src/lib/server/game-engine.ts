@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomInt } from "crypto";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import { rebuildPublicRoomState } from "@/lib/server/room-state";
 import type { PlayerAuthRow, RoomAuthRow } from "@/lib/server/auth";
@@ -9,7 +10,6 @@ import {
   isAfterDeadline,
   phaseUpdate,
   randomItem,
-  randomSample,
   readSettings,
   savingGracePrompt,
   type PlayerRow,
@@ -240,6 +240,53 @@ function toChallengeOption(challenge: ChallengeRow): ChallengeOption {
   };
 }
 
+function weightedChallengeSample(
+  challenges: ChallengeRow[],
+  usageByChallengeId: Map<string, number>,
+  count: number,
+  avoidChallengeIds: Set<string>,
+) {
+  const selected: ChallengeRow[] = [];
+  const selectedIds = new Set<string>();
+
+  while (selected.length < count && selectedIds.size < challenges.length) {
+    const preferredPool = challenges.filter(
+      (challenge) =>
+        !selectedIds.has(challenge.id) && !avoidChallengeIds.has(challenge.id),
+    );
+    const fallbackPool = challenges.filter(
+      (challenge) => !selectedIds.has(challenge.id),
+    );
+    const pool = preferredPool.length > 0 ? preferredPool : fallbackPool;
+
+    if (pool.length === 0) {
+      break;
+    }
+
+    const weighted = pool.map((challenge) => {
+      const usage = usageByChallengeId.get(challenge.id) || 0;
+
+      return {
+        challenge,
+        weight: Math.max(1, Math.floor(100 / ((usage + 1) * (usage + 1)))),
+      };
+    });
+    const totalWeight = weighted.reduce((sum, item) => sum + item.weight, 0);
+    let cursor = randomInt(totalWeight);
+    const picked =
+      weighted.find((item) => {
+        cursor -= item.weight;
+        return cursor < 0;
+      })?.challenge || weighted[weighted.length - 1].challenge;
+
+    selected.push(picked);
+    selectedIds.add(picked.id);
+    avoidChallengeIds.add(picked.id);
+  }
+
+  return selected;
+}
+
 const CONSEQUENCE_CHOICES: ConsequenceChoice[] = ["DRINK", "FLIP", "CHALLENGE"];
 
 function isConsequenceChoice(value: unknown): value is ConsequenceChoice {
@@ -383,7 +430,28 @@ async function assignLeadersAndChallenges(
     throw new Error(leaderInsertError.message);
   }
 
+  const { data: previousChallengeUsage, error: usageError } = await supabase
+    .from("challenge_assignments")
+    .select("challenge_id")
+    .eq("room_id", room.id)
+    .not("challenge_id", "is", null)
+    .returns<Array<{ challenge_id: string }>>();
+
+  if (usageError) {
+    throw new Error(usageError.message);
+  }
+
+  const usageByChallengeId = new Map<string, number>();
+
+  for (const usage of previousChallengeUsage || []) {
+    usageByChallengeId.set(
+      usage.challenge_id,
+      (usageByChallengeId.get(usage.challenge_id) || 0) + 1,
+    );
+  }
+
   const targetByChooserTeamId = crossPickTargets(teams);
+  const usedOptionIdsThisRound = new Set<string>();
   const assignmentRows = teams.map((team) => {
     const targetTeam = targetByChooserTeamId.get(team.id);
 
@@ -392,9 +460,12 @@ async function assignLeadersAndChallenges(
     }
 
     const leader = leaderRows.find((row) => row.team_id === team.id);
-    const options = randomSample(challenges, Math.min(3, challenges.length)).map(
-      toChallengeOption,
-    );
+    const options = weightedChallengeSample(
+      challenges,
+      usageByChallengeId,
+      Math.min(3, challenges.length),
+      usedOptionIdsThisRound,
+    ).map(toChallengeOption);
 
     return {
       room_id: room.id,
