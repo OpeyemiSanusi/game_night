@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { hostTokenKey, readStoredToken } from "@/lib/client-storage";
 import { usePublicRoomState } from "@/lib/use-public-room-state";
@@ -59,6 +59,7 @@ export function HostRoom({ roomCode, view = "host" }: HostRoomProps) {
   const [questionTimerSeconds, setQuestionTimerSeconds] = useState(25);
   const [selectedQuestionPackId, setSelectedQuestionPackId] = useState("");
   const [selectedChallengeDeckId, setSelectedChallengeDeckId] = useState("");
+  const lastHostSyncVersionRef = useRef<number | null>(null);
   const { state, realtimeEnabled } = usePublicRoomState(
     normalizedRoomCode,
     hostState?.publicState || null,
@@ -66,7 +67,7 @@ export function HostRoom({ roomCode, view = "host" }: HostRoomProps) {
   const publicState = state || hostState?.publicState || null;
   const tokenKey = useMemo(() => hostTokenKey(normalizedRoomCode), [normalizedRoomCode]);
 
-  async function fetchHostState() {
+  async function fetchHostState(options: { quiet?: boolean } = {}) {
     const token = readStoredToken(tokenKey);
 
     if (!token) {
@@ -75,7 +76,9 @@ export function HostRoom({ roomCode, view = "host" }: HostRoomProps) {
       return;
     }
 
-    setLoading(true);
+    if (!options.quiet) {
+      setLoading(true);
+    }
     setError(null);
 
     try {
@@ -126,6 +129,24 @@ export function HostRoom({ roomCode, view = "host" }: HostRoomProps) {
     return () => window.clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [normalizedRoomCode, tokenKey]);
+
+  useEffect(() => {
+    if (!publicState?.version || !hostState) {
+      return;
+    }
+
+    if (lastHostSyncVersionRef.current === publicState.version) {
+      return;
+    }
+
+    lastHostSyncVersionRef.current = publicState.version;
+    const timeout = window.setTimeout(() => {
+      void fetchHostState({ quiet: true });
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publicState?.version]);
 
   async function postJson(path: string, body: Record<string, unknown>, busy: string) {
     const token = readStoredToken(tokenKey);
@@ -364,8 +385,8 @@ export function HostRoom({ roomCode, view = "host" }: HostRoomProps) {
               <h2 className="mt-2 text-xl font-black text-white">
                 {hostState.game.currentQuestion.quote}
               </h2>
-              <p className="mt-2 font-bold text-cyan-100">
-                Correct: {hostState.game.currentQuestion.correctAnswerName}
+              <p className="mt-2 font-bold text-white/55">
+                Question loaded for this round.
               </p>
             </section>
           ) : null}

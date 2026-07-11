@@ -7,6 +7,7 @@ import {
   readStoredToken,
 } from "@/lib/client-storage";
 import { usePublicRoomState } from "@/lib/use-public-room-state";
+import { useSyncedTimer } from "@/lib/use-synced-timer";
 import { Avatar } from "@/components/Avatar";
 import { RoomStatusHeader } from "@/components/RoomStatusHeader";
 import { TeamGrid } from "@/components/TeamGrid";
@@ -185,6 +186,7 @@ export function PlayerRoom({ roomCode }: PlayerRoomProps) {
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const lastPrivateSyncVersionRef = useRef<number | null>(null);
   const tokenKey = useMemo(
     () => playerTokenKey(normalizedRoomCode),
     [normalizedRoomCode],
@@ -194,8 +196,11 @@ export function PlayerRoom({ roomCode }: PlayerRoomProps) {
     playerState?.publicState || null,
   );
   const publicState = state || playerState?.publicState || null;
+  const typedPlayerState =
+    playerState?.player && playerState.room ? (playerState as PlayerPrivateState) : null;
+  const timer = useSyncedTimer(publicState?.timer);
 
-  async function loadPlayerState() {
+  async function loadPlayerState(options: { quiet?: boolean } = {}) {
     const playerToken = readStoredToken(tokenKey);
 
     if (!playerToken) {
@@ -204,7 +209,9 @@ export function PlayerRoom({ roomCode }: PlayerRoomProps) {
       return;
     }
 
-    setLoading(true);
+    if (!options.quiet) {
+      setLoading(true);
+    }
     setError(null);
 
     try {
@@ -241,6 +248,37 @@ export function PlayerRoom({ roomCode }: PlayerRoomProps) {
     return () => window.clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [normalizedRoomCode, tokenKey]);
+
+  useEffect(() => {
+    if (!publicState?.version || !typedPlayerState) {
+      return;
+    }
+
+    if (lastPrivateSyncVersionRef.current === publicState.version) {
+      return;
+    }
+
+    lastPrivateSyncVersionRef.current = publicState.version;
+    const timeout = window.setTimeout(() => {
+      void loadPlayerState({ quiet: true });
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publicState?.version]);
+
+  useEffect(() => {
+    if (!typedPlayerState) {
+      return;
+    }
+
+    const heartbeatInterval = window.setInterval(() => {
+      void loadPlayerState({ quiet: true });
+    }, 5000);
+
+    return () => window.clearInterval(heartbeatInterval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typedPlayerState?.player.id]);
 
   async function postPlayer(path: string, body: Record<string, unknown>, busy: string) {
     const token = readStoredToken(tokenKey);
@@ -337,8 +375,6 @@ export function PlayerRoom({ roomCode }: PlayerRoomProps) {
     );
   }
 
-  const typedPlayerState =
-    playerState?.player && playerState.room ? (playerState as PlayerPrivateState) : null;
   const actions = typedPlayerState?.actions || {};
   const currentQuestion = publicState?.question;
   const selectedVote = typedPlayerState?.myVote || null;
@@ -415,6 +451,26 @@ export function PlayerRoom({ roomCode }: PlayerRoomProps) {
               Uploading photo...
             </div>
           ) : null}
+        </section>
+      ) : null}
+
+      {publicState?.timer.phaseEndsAt ? (
+        <section className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-[1.5rem] border border-cyan-300/20 bg-cyan-300/10 p-5">
+          <div>
+            <div className="text-xs font-black uppercase tracking-[0.22em] text-cyan-100/60">
+              Timer
+            </div>
+            <div className="mt-1 font-bold text-white/60">
+              {publicState.timer.isPaused
+                ? "Paused"
+                : timer.isExpired
+                  ? "Time is up"
+                  : "Synced with the room"}
+            </div>
+          </div>
+          <div className="min-w-24 rounded-2xl bg-black/35 px-5 py-3 text-center text-4xl font-black text-cyan-100">
+            {timer.seconds ?? "--"}
+          </div>
         </section>
       ) : null}
 

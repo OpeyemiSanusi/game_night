@@ -34,6 +34,7 @@ interface PlayerRow {
   join_order: number;
   status: PlayerStatus;
   is_connected: boolean;
+  last_seen_at: string | null;
 }
 
 export async function GET(
@@ -77,7 +78,7 @@ export async function GET(
   const { data: player, error: playerError } = await supabase
     .from("players")
     .select(
-      "id, room_id, team_id, display_name, initials, avatar_url, join_order, status, is_connected",
+      "id, room_id, team_id, display_name, initials, avatar_url, join_order, status, is_connected, last_seen_at",
     )
     .eq("room_id", room.id)
     .eq("token_hash", hashToken(token))
@@ -91,7 +92,21 @@ export async function GET(
     return fail("Player session was not found for this room.", 401);
   }
 
-  const publicState = await rebuildPublicRoomState(room.id);
+  const now = new Date().toISOString();
+  await supabase
+    .from("players")
+    .update({ is_connected: true, last_seen_at: now })
+    .eq("id", player.id);
+
+  player.is_connected = true;
+  player.last_seen_at = now;
+
+  const { data: publicStateRow } = await supabase
+    .from("public_room_state")
+    .select("state")
+    .eq("room_id", room.id)
+    .maybeSingle<{ state: PublicRoomState }>();
+  const publicState = publicStateRow?.state || (await rebuildPublicRoomState(room.id));
   const playerPublic = toPlayerPublic(player);
   const team = publicState.teams.find((item) => item.id === player.team_id) || null;
   const actions: NonNullable<PlayerPrivateState["actions"]> = {};
@@ -146,11 +161,12 @@ export async function GET(
   if (leader && room.phase === "CHALLENGE_SELECTION" && player.team_id && round) {
     const { data: assignment } = await supabase
       .from("challenge_assignments")
-      .select("id, options")
+      .select("id, challenge_id, options")
       .eq("round_id", round.id)
       .eq("chooser_team_id", player.team_id)
       .maybeSingle<{
         id: string;
+        challenge_id: string | null;
         options: Array<{
           id: string;
           title: string;
@@ -161,14 +177,16 @@ export async function GET(
       }>();
 
     actions.leaderChallengeOptions =
-      assignment?.options.map((option) => ({
-        assignmentId: assignment.id,
-        challengeId: option.id,
-        title: option.title,
-        instructions: option.instructions,
-        durationSeconds: option.durationSeconds,
-        successCriteria: option.successCriteria,
-      })) || [];
+      assignment && !assignment.challenge_id
+        ? assignment.options.map((option) => ({
+            assignmentId: assignment.id,
+            challengeId: option.id,
+            title: option.title,
+            instructions: option.instructions,
+            durationSeconds: option.durationSeconds,
+            successCriteria: option.successCriteria,
+          }))
+        : [];
   }
 
   if (leader && room.phase === "SAVING_GRACE_CATEGORY") {

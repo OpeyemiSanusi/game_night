@@ -48,6 +48,7 @@ interface PlayerRow {
   join_order: number;
   status: PlayerStatus;
   is_connected: boolean;
+  last_seen_at: string | null;
 }
 
 interface RoundRow {
@@ -106,6 +107,9 @@ interface AssignmentChallengeRow {
 }
 
 export function toPlayerPublic(player: PlayerRow): PlayerPublic {
+  const lastSeenMs = player.last_seen_at ? Date.parse(player.last_seen_at) : 0;
+  const recentlySeen = lastSeenMs > 0 && Date.now() - lastSeenMs < 15_000;
+
   return {
     id: player.id,
     teamId: player.team_id,
@@ -114,7 +118,7 @@ export function toPlayerPublic(player: PlayerRow): PlayerPublic {
     avatarUrl: player.avatar_url,
     joinOrder: player.join_order,
     status: player.status,
-    isConnected: player.is_connected,
+    isConnected: player.is_connected && recentlySeen,
   };
 }
 
@@ -425,7 +429,7 @@ export async function rebuildPublicRoomState(roomId: string) {
       supabase
         .from("players")
         .select(
-          "id, room_id, team_id, display_name, initials, avatar_url, join_order, status, is_connected",
+          "id, room_id, team_id, display_name, initials, avatar_url, join_order, status, is_connected, last_seen_at",
         )
         .eq("room_id", room.id)
         .order("join_order", { ascending: true })

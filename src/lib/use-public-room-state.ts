@@ -24,8 +24,10 @@ export function usePublicRoomState(
   useEffect(() => {
     let isMounted = true;
 
-    async function loadPublicState() {
-      setLoading(true);
+    async function loadPublicState(isInitialLoad = false) {
+      if (isInitialLoad) {
+        setLoading(true);
+      }
       setError(null);
 
       try {
@@ -40,7 +42,11 @@ export function usePublicRoomState(
         }
 
         if (isMounted) {
-          setState(payload.publicState);
+          setState((currentState) =>
+            !currentState || payload.publicState!.version >= currentState.version
+              ? payload.publicState!
+              : currentState,
+          );
         }
       } catch (loadError) {
         if (isMounted) {
@@ -57,10 +63,14 @@ export function usePublicRoomState(
       }
     }
 
-    loadPublicState();
+    void loadPublicState(true);
+    const pollInterval = window.setInterval(() => {
+      void loadPublicState(false);
+    }, 2000);
 
     return () => {
       isMounted = false;
+      window.clearInterval(pollInterval);
     };
   }, [normalizedRoomCode]);
 
