@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+:root {
+  --background: #080910;
+  --foreground: #f8fbff;
+  --game-background: #080910;
+  --game-card: #131725;
+  --game-card-strong: #1b2134;
+  --game-border: rgba(255, 255, 255, 0.1);
+  --team-one: #00d1ff;
+  --team-two: #ffc857;
+  --team-three: #8b5cf6;
+  --team-four: #ff4d8d;
+  --team-five: #7ed957;
+  --team-six: #ff7a1a;
+  --team-seven: #2dd4bf;
+  --team-eight: #f5e642;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  overflow-x: hidden;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  min-height: 44px;
+}
+
+::selection {
+  background: rgba(0, 209, 255, 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+}

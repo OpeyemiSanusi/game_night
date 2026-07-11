@@ -1,0 +1,273 @@
+import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { fail, ok } from "@/lib/server/http";
+import { rebuildPublicRoomState, toPlayerPublic } from "@/lib/server/room-state";
+import { hashToken } from "@/lib/server/tokens";
+import { savingGracePrompt } from "@/lib/server/game-utils";
+import { normalizeRoomCode } from "@/lib/validation";
+import type {
+  AnswerOption,
+  GamePhase,
+  PlayerPrivateState,
+  PlayerStatus,
+  PublicRoomState,
+  SavingGraceCategory,
+} from "@/lib/types";
+
+export const runtime = "nodejs";
+
+interface RoomRow {
+  id: string;
+  room_code: string;
+  title: string;
+  phase: GamePhase;
+  team_count: number;
+  current_round_number: number;
+}
+
+interface PlayerRow {
+  id: string;
+  room_id: string;
+  team_id: string | null;
+  display_name: string;
+  initials: string;
+  avatar_url: string | null;
+  join_order: number;
+  status: PlayerStatus;
+  is_connected: boolean;
+}
+
+export async function GET(
+  request: Request,
+  context: { params: Promise<{ roomCode: string }> },
+) {
+  const { roomCode: rawRoomCode } = await context.params;
+  const roomCode = normalizeRoomCode(rawRoomCode);
+  const token = request.headers.get("x-player-token");
+
+  if (!roomCode) {
+    return fail("Enter a valid room code.", 400);
+  }
+
+  if (!token) {
+    return fail("Player token is required.", 401);
+  }
+
+  let supabase: ReturnType<typeof getSupabaseAdmin>;
+
+  try {
+    supabase = getSupabaseAdmin();
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Server is not configured.", 500);
+  }
+
+  const { data: room, error: roomError } = await supabase
+    .from("rooms")
+    .select("id, room_code, title, phase, team_count, current_round_number")
+    .eq("room_code", roomCode)
+    .maybeSingle<RoomRow>();
+
+  if (roomError) {
+    return fail(roomError.message, 500);
+  }
+
+  if (!room) {
+    return fail("Room not found. Check the code and try again.", 404);
+  }
+
+  const { data: player, error: playerError } = await supabase
+    .from("players")
+    .select(
+      "id, room_id, team_id, display_name, initials, avatar_url, join_order, status, is_connected",
+    )
+    .eq("room_id", room.id)
+    .eq("token_hash", hashToken(token))
+    .maybeSingle<PlayerRow>();
+
+  if (playerError) {
+    return fail(playerError.message, 500);
+  }
+
+  if (!player) {
+    return fail("Player session was not found for this room.", 401);
+  }
+
+  const publicState = await rebuildPublicRoomState(room.id);
+  const playerPublic = toPlayerPublic(player);
+  const team = publicState.teams.find((item) => item.id === player.team_id) || null;
+  const actions: NonNullable<PlayerPrivateState["actions"]> = {};
+  let role: PlayerPrivateState["role"] = "player";
+  let myVote: string | null = null;
+
+  const { data: round } =
+    room.phase !== "LOBBY" && room.phase !== "TEAM_SETUP"
+      ? await supabase
+          .from("rounds")
+          .select("id, question_id, round_number")
+          .eq("room_id", room.id)
+          .eq("round_number", room.current_round_number)
+          .maybeSingle<{ id: string; question_id: string | null; round_number: number }>()
+      : { data: null };
+
+  const { data: leader } =
+    round && player.team_id
+      ? await supabase
+          .from("round_leaders")
+          .select("id")
+          .eq("round_id", round.id)
+          .eq("team_id", player.team_id)
+          .eq("player_id", player.id)
+          .maybeSingle<{ id: string }>()
+      : { data: null };
+
+  if (leader) {
+    role = "leader";
+  }
+
+  if (round?.question_id && ["QUESTION_ACTIVE", "VOTING_LOCKED"].includes(room.phase)) {
+    const [{ data: question }, { data: vote }] = await Promise.all([
+      supabase
+        .from("questions")
+        .select("answer_options")
+        .eq("id", round.question_id)
+        .maybeSingle<{ answer_options: AnswerOption[] }>(),
+      supabase
+        .from("votes")
+        .select("answer_id")
+        .eq("round_id", round.id)
+        .eq("player_id", player.id)
+        .maybeSingle<{ answer_id: string }>(),
+    ]);
+
+    actions.canVote = room.phase === "QUESTION_ACTIVE";
+    actions.answerOptions = question?.answer_options || [];
+    myVote = vote?.answer_id || null;
+  }
+
+  if (leader && room.phase === "CHALLENGE_SELECTION" && player.team_id && round) {
+    const { data: assignment } = await supabase
+      .from("challenge_assignments")
+      .select("id, options")
+      .eq("round_id", round.id)
+      .eq("chooser_team_id", player.team_id)
+      .maybeSingle<{
+        id: string;
+        options: Array<{
+          id: string;
+          title: string;
+          instructions: string;
+          durationSeconds: number;
+          successCriteria: string;
+        }>;
+      }>();
+
+    actions.leaderChallengeOptions =
+      assignment?.options.map((option) => ({
+        assignmentId: assignment.id,
+        challengeId: option.id,
+        title: option.title,
+        instructions: option.instructions,
+        durationSeconds: option.durationSeconds,
+        successCriteria: option.successCriteria,
+      })) || [];
+  }
+
+  if (leader && room.phase === "SAVING_GRACE_CATEGORY") {
+    actions.savingGraceCategories = [
+      "TIME_OF_DAY",
+      "NEXT_SENDER",
+      "REACTION_COUNT",
+    ];
+  }
+
+  if (leader && room.phase === "SAVING_GRACE_ACTIVE" && player.team_id && round) {
+    const [{ data: attempt }, { data: question }] = await Promise.all([
+      supabase
+        .from("saving_grace_attempts")
+        .select("category")
+        .eq("round_id", round.id)
+        .eq("team_id", player.team_id)
+        .maybeSingle<{ category: SavingGraceCategory | null }>(),
+      round.question_id
+        ? supabase
+            .from("questions")
+            .select(
+              "sent_at, next_sender_options, correct_next_sender_id, reaction_count",
+            )
+            .eq("id", round.question_id)
+            .maybeSingle<{
+              sent_at: string;
+              next_sender_options: AnswerOption[];
+              correct_next_sender_id: string | null;
+              reaction_count: number;
+            }>()
+        : Promise.resolve({ data: null }),
+    ]);
+
+    if (attempt?.category && question) {
+      const prompt = savingGracePrompt(attempt.category, question);
+      actions.savingGraceQuestion = {
+        category: attempt.category,
+        prompt: prompt.prompt,
+        options: prompt.options,
+      };
+    }
+  }
+
+  if (leader && room.phase === "SACRIFICIAL_LAMB_SELECTION" && team) {
+    actions.lambOptions = team.players.filter((candidate) => candidate.status === "active");
+  }
+
+  if (round) {
+    const { data: penalty } = await supabase
+      .from("penalties")
+      .select("id, lamb_player_id, status, team_id")
+      .eq("round_id", round.id)
+      .or(`lamb_player_id.eq.${player.id},rescuer_player_id.eq.${player.id}`)
+      .order("queue_index", { ascending: true })
+      .limit(1)
+      .maybeSingle<{ id: string; lamb_player_id: string | null; status: string; team_id: string }>();
+
+    if (penalty?.lamb_player_id === player.id) {
+      role = "lamb";
+    }
+
+    if (
+      room.phase === "CONSEQUENCE_CHOICE" &&
+      penalty?.lamb_player_id === player.id
+    ) {
+      actions.consequenceOptions = ["DRINK", "CHALLENGE"];
+    }
+
+    if (
+      room.phase === "RESCUER_SELECTION" &&
+      penalty?.lamb_player_id === player.id &&
+      team
+    ) {
+      actions.rescuerOptions = team.players.filter(
+        (candidate) => candidate.status === "active" && candidate.id !== player.id,
+      );
+    }
+  }
+
+  const response: PlayerPrivateState & { publicState: PublicRoomState } = {
+    room: {
+      id: room.id,
+      roomCode: room.room_code,
+      title: room.title,
+      phase: room.phase,
+      teamCount: room.team_count,
+    },
+    player: playerPublic,
+    team,
+    role,
+    message:
+      player.status === "pending"
+        ? "You joined after the game started. Wait for the host to approve you."
+        : "You are connected.",
+    myVote,
+    actions,
+    publicState,
+  };
+
+  return ok(response);
+}
