@@ -243,11 +243,32 @@ async function assignLeadersAndChallenges(
   room: RoomAuthRow,
   round: RoundRow,
 ) {
+  const [{ data: existingLeaders }, { data: existingAssignments }] =
+    await Promise.all([
+      supabase
+        .from("round_leaders")
+        .select("id")
+        .eq("round_id", round.id)
+        .returns<Array<{ id: string }>>(),
+      supabase
+        .from("challenge_assignments")
+        .select("id")
+        .eq("round_id", round.id)
+        .returns<Array<{ id: string }>>(),
+    ]);
+
   const [teams, players, challenges] = await Promise.all([
     loadTeams(supabase, room.id),
     loadPlayers(supabase, room.id),
     loadChallenges(supabase, room.settings),
   ]);
+
+  if (
+    (existingLeaders?.length || 0) >= teams.length &&
+    (existingAssignments?.length || 0) >= teams.length
+  ) {
+    return;
+  }
 
   const { data: previousLeaders, error: leadersError } = await supabase
     .from("round_leaders")
@@ -295,7 +316,7 @@ async function assignLeadersAndChallenges(
 
   const { error: leaderInsertError } = await supabase
     .from("round_leaders")
-    .insert(leaderRows);
+    .upsert(leaderRows, { onConflict: "round_id,team_id" });
 
   if (leaderInsertError) {
     throw new Error(leaderInsertError.message);
@@ -320,7 +341,9 @@ async function assignLeadersAndChallenges(
 
   const { error: assignmentError } = await supabase
     .from("challenge_assignments")
-    .insert(assignmentRows);
+    .upsert(assignmentRows, {
+      onConflict: "round_id,chooser_team_id,target_team_id",
+    });
 
   if (assignmentError) {
     throw new Error(assignmentError.message);
@@ -374,8 +397,22 @@ async function createNextRound(supabase: SupabaseAdmin, room: RoomAuthRow) {
     return;
   }
 
-  const question = await chooseNextQuestion(supabase, room);
-  const { data: round, error } = await supabase
+  const { data: existingRound, error: existingRoundError } = await supabase
+    .from("rounds")
+    .select("id, room_id, question_id, round_number, results")
+    .eq("room_id", room.id)
+    .eq("round_number", nextRoundNumber)
+    .maybeSingle<RoundRow>();
+
+  if (existingRoundError) {
+    throw new Error(existingRoundError.message);
+  }
+
+  let round = existingRound;
+
+  if (!round) {
+    const question = await chooseNextQuestion(supabase, room);
+    const { data: insertedRound, error } = await supabase
     .from("rounds")
     .insert({
       room_id: room.id,
@@ -387,8 +424,22 @@ async function createNextRound(supabase: SupabaseAdmin, room: RoomAuthRow) {
     .select("id, room_id, question_id, round_number, results")
     .single<RoundRow>();
 
-  if (error || !round) {
-    throw new Error(error?.message || "Round could not be created.");
+    if (error || !insertedRound) {
+      const { data: racedRound } = await supabase
+        .from("rounds")
+        .select("id, room_id, question_id, round_number, results")
+        .eq("room_id", room.id)
+        .eq("round_number", nextRoundNumber)
+        .maybeSingle<RoundRow>();
+
+      if (!racedRound) {
+        throw new Error(error?.message || "Round could not be created.");
+      }
+
+      round = racedRound;
+    } else {
+      round = insertedRound;
+    }
   }
 
   await assignLeadersAndChallenges(supabase, room, round);
