@@ -54,6 +54,7 @@ export async function POST(request: Request) {
     answer_options: question.answerOptions,
     correct_answer_id: question.correctAnswerId,
     sent_at: question.sentAt,
+    time_of_day: question.timeOfDay,
     next_sender_options: question.nextSenderOptions,
     correct_next_sender_id: question.correctNextSenderId,
     reaction_count: question.reactionCount,

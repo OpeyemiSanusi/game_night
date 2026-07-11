@@ -236,6 +236,7 @@ export function savingGracePrompt(
   category: SavingGraceCategory,
   question: {
     sent_at: string;
+    time_of_day?: string | null;
     next_sender_options: AnswerOption[];
     correct_next_sender_id: string | null;
     reaction_count: number;
@@ -246,7 +247,7 @@ export function savingGracePrompt(
       return {
         prompt: "When was this message sent?",
         options: ["Morning", "Afternoon", "Night"],
-        correctAnswer: timeOfDayBucket(question.sent_at),
+        correctAnswer: question.time_of_day || timeOfDayBucket(question.sent_at),
       };
     case "NEXT_SENDER": {
       const correct = question.next_sender_options.find(

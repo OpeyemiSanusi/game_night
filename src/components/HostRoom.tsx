@@ -9,7 +9,14 @@ import { Avatar } from "@/components/Avatar";
 import { RoomStatusHeader } from "@/components/RoomStatusHeader";
 import { TeamGrid } from "@/components/TeamGrid";
 import { StateBadge } from "@/components/StateBadge";
-import type { HostAction, HostPrivateState, PublicRoomState } from "@/lib/types";
+import type {
+  AnswerOption,
+  HostAction,
+  HostPrivateState,
+  HostSavingGraceCategory,
+  HostSavingGraceHostState,
+  PublicRoomState,
+} from "@/lib/types";
 
 interface HostRoomProps {
   roomCode: string;
@@ -48,6 +55,11 @@ const consequenceLabels = {
   FLIP: "Flip",
   CHALLENGE: "Challenge",
 } as const;
+
+const hostSavingGraceCategoryLabels: Record<HostSavingGraceCategory, string> = {
+  TIME_OF_DAY: "Time of Day",
+  NEXT_SENDER: "Who Texted Next",
+};
 
 const punishmentPhases: PublicRoomState["phase"][] = [
   "DRINK_CONFIRMATION",
@@ -566,21 +578,191 @@ function labelForPunishmentPhase(phase: PublicRoomState["phase"]) {
   return "Next";
 }
 
+function initialsForName(name: string) {
+  return name
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+function SavingGraceOptionButton({
+  option,
+  disabled,
+  onClick,
+}: {
+  option: AnswerOption;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="flex min-h-14 items-center gap-3 rounded-[1rem] border border-black/10 bg-black/[0.05] px-3 py-2 text-left font-black text-black transition hover:bg-black/[0.08] disabled:opacity-50"
+    >
+      <Avatar
+        player={{
+          displayName: option.name,
+          initials: initialsForName(option.name) || "?",
+          avatarUrl: option.avatarUrl || null,
+        }}
+        size="sm"
+      />
+      <span className="min-w-0 flex-1 truncate">{option.name}</span>
+    </button>
+  );
+}
+
+function HostSavingGraceModal({
+  savingGrace,
+  busyAction,
+  onClose,
+  onStart,
+  onAnswer,
+}: {
+  savingGrace: HostSavingGraceHostState;
+  busyAction: string | null;
+  onClose: () => void;
+  onStart: (category: HostSavingGraceCategory) => void;
+  onAnswer: (answer: string) => void;
+}) {
+  const attempt = savingGrace.activeAttempt;
+  const answered = Boolean(attempt?.answer);
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 px-4 py-6">
+      <section className="grid w-full max-w-lg gap-4 rounded-[1.35rem] bg-white p-5 text-black shadow-[0_24px_70px_rgba(0,0,0,0.28)]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-black uppercase text-black/45">
+              {savingGrace.teamName}
+            </div>
+            <h2
+              className="mt-1 text-2xl font-black"
+              style={{ fontFamily: "var(--game-comic-font)" }}
+            >
+              Saving Grace
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-black/[0.08] text-xl font-black text-black"
+            aria-label="Close Saving Grace"
+          >
+            x
+          </button>
+        </div>
+
+        {!attempt ? (
+          <>
+            <div className="rounded-[1rem] bg-yellow-100 px-4 py-3 text-sm font-black text-black/70">
+              {savingGrace.remaining} Saving Grace uses left
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(["TIME_OF_DAY", "NEXT_SENDER"] as HostSavingGraceCategory[]).map(
+                (category) => (
+                  <button
+                    key={category}
+                    type="button"
+                    disabled={savingGrace.remaining <= 0 || Boolean(busyAction)}
+                    onClick={() => onStart(category)}
+                    className="min-h-16 rounded-[1rem] bg-purple-700 px-4 text-left text-lg font-black text-white shadow-[0_12px_26px_rgba(80,20,140,0.25)] disabled:cursor-not-allowed disabled:opacity-45"
+                    style={{ fontFamily: "var(--game-comic-font)" }}
+                  >
+                    {hostSavingGraceCategoryLabels[category]}
+                  </button>
+                ),
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-2">
+              <span className="rounded-full bg-yellow-200 px-3 py-1 text-xs font-black uppercase text-black">
+                {hostSavingGraceCategoryLabels[attempt.category]}
+              </span>
+              <span className="rounded-full bg-black/[0.08] px-3 py-1 text-xs font-black uppercase text-black/60">
+                {savingGrace.remaining} left
+              </span>
+            </div>
+            <h3
+              className="text-2xl font-black leading-tight"
+              style={{ fontFamily: "var(--game-comic-font)" }}
+            >
+              {attempt.prompt}
+            </h3>
+
+            {answered ? (
+              <div
+                className={`rounded-[1rem] px-4 py-3 font-black ${
+                  attempt.isCorrect
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-red-100 text-red-800"
+                }`}
+              >
+                {attempt.isCorrect ? "Correct" : "Wrong"}
+                <div className="mt-1 text-sm">
+                  Answer: {attempt.correctAnswer || "Unknown"}
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-2">
+                {attempt.options.map((option) => (
+                  <SavingGraceOptionButton
+                    key={option.id}
+                    option={option}
+                    disabled={Boolean(busyAction)}
+                    onClick={() => onAnswer(option.name)}
+                  />
+                ))}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-12 rounded-[1rem] bg-black px-4 font-black text-white"
+            >
+              Close
+            </button>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function HostPenaltyReveal({
   state,
   revealed,
   busyAction,
+  savingGrace,
   onReveal,
   onAction,
+  onStartSavingGrace,
+  onAnswerSavingGrace,
 }: {
   state: PublicRoomState;
   revealed: boolean;
   busyAction: string | null;
+  savingGrace: HostSavingGraceHostState | null | undefined;
   onReveal: () => void;
   onAction: (action: HostAction) => void;
+  onStartSavingGrace: (category: HostSavingGraceCategory) => void;
+  onAnswerSavingGrace: (answer: string) => void;
 }) {
   const penalty = state.activePenalty;
   const action = actionForPunishmentPhase(state.phase);
+  const [savingGraceOpenPenaltyId, setSavingGraceOpenPenaltyId] = useState<
+    string | null
+  >(null);
+  const savingGraceOpen = Boolean(
+    penalty?.id && savingGraceOpenPenaltyId === penalty.id,
+  );
 
   return (
     <main
@@ -678,18 +860,47 @@ function HostPenaltyReveal({
           ) : null}
 
           {action && revealed ? (
-            <button
-              type="button"
-              onClick={() => onAction(action)}
-              disabled={Boolean(busyAction)}
-              className="mx-auto h-14 w-full max-w-sm rounded-[1.25rem] bg-purple-700 px-6 text-xl font-black text-white shadow-[0_18px_40px_rgba(80,20,140,0.35)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
-              style={{ fontFamily: "var(--game-comic-font)" }}
+            <div
+              className={`mx-auto grid w-full max-w-sm gap-3 ${
+                savingGrace ? "sm:grid-cols-2" : ""
+              }`}
             >
-              {busyAction === action ? "Moving..." : labelForPunishmentPhase(state.phase)}
-            </button>
+              {savingGrace ? (
+                <button
+                  type="button"
+                  onClick={() => setSavingGraceOpenPenaltyId(penalty?.id || null)}
+                  disabled={
+                    Boolean(busyAction) ||
+                    (!savingGrace.activeAttempt && savingGrace.remaining <= 0)
+                  }
+                  className="h-14 rounded-[1.25rem] bg-yellow-200 px-4 text-base font-black text-black shadow-[0_12px_28px_rgba(0,0,0,0.14)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{ fontFamily: "var(--game-comic-font)" }}
+                >
+                  Saving Grace: {savingGrace.remaining}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => onAction(action)}
+                disabled={Boolean(busyAction)}
+                className="h-14 rounded-[1.25rem] bg-purple-700 px-6 text-xl font-black text-white shadow-[0_18px_40px_rgba(80,20,140,0.35)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ fontFamily: "var(--game-comic-font)" }}
+              >
+                {busyAction === action ? "Moving..." : labelForPunishmentPhase(state.phase)}
+              </button>
+            </div>
           ) : null}
         </section>
       </div>
+      {savingGraceOpen && savingGrace ? (
+        <HostSavingGraceModal
+          savingGrace={savingGrace}
+          busyAction={busyAction}
+          onClose={() => setSavingGraceOpenPenaltyId(null)}
+          onStart={onStartSavingGrace}
+          onAnswer={onAnswerSavingGrace}
+        />
+      ) : null}
     </main>
   );
 }
@@ -848,6 +1059,26 @@ export function HostRoom({ roomCode, view = "host" }: HostRoomProps) {
       `/api/rooms/${encodeURIComponent(normalizedRoomCode)}/host/team-config`,
       body,
       label,
+    );
+  }
+
+  function runSavingGraceStart(category: HostSavingGraceCategory) {
+    return postJson(
+      `/api/rooms/${encodeURIComponent(
+        normalizedRoomCode,
+      )}/host/saving-grace/start`,
+      { category },
+      `SAVING_GRACE_${category}`,
+    );
+  }
+
+  function runSavingGraceAnswer(answer: string) {
+    return postJson(
+      `/api/rooms/${encodeURIComponent(
+        normalizedRoomCode,
+      )}/host/saving-grace/answer`,
+      { answer },
+      "SAVING_GRACE_ANSWER",
     );
   }
 
@@ -1319,8 +1550,11 @@ export function HostRoom({ roomCode, view = "host" }: HostRoomProps) {
         state={publicState}
         revealed={activePenaltyId ? Boolean(revealedPenaltyIds[activePenaltyId]) : false}
         busyAction={busyAction}
+        savingGrace={hostState.game?.savingGrace}
         onReveal={revealActivePenalty}
         onAction={(action) => void runHostAction(action)}
+        onStartSavingGrace={(category) => void runSavingGraceStart(category)}
+        onAnswerSavingGrace={(answer) => void runSavingGraceAnswer(answer)}
       />
     );
   }

@@ -35,6 +35,11 @@ export type SavingGraceCategory =
   | "NEXT_SENDER"
   | "REACTION_COUNT";
 
+export type HostSavingGraceCategory = Extract<
+  SavingGraceCategory,
+  "TIME_OF_DAY" | "NEXT_SENDER"
+>;
+
 export type ConsequenceChoice = "DRINK" | "FLIP" | "CHALLENGE";
 
 export type HostAction =
@@ -134,6 +139,22 @@ export interface SavingGracePublic {
       isCorrect: boolean;
     }
   >;
+}
+
+export interface HostSavingGraceAttemptPublic {
+  category: HostSavingGraceCategory;
+  prompt: string;
+  options: AnswerOption[];
+  answer: string | null;
+  correctAnswer: string | null;
+  isCorrect: boolean | null;
+}
+
+export interface HostSavingGraceHostState {
+  teamId: string;
+  teamName: string;
+  remaining: number;
+  activeAttempt: HostSavingGraceAttemptPublic | null;
 }
 
 export interface PenaltyPublic {
@@ -303,5 +324,6 @@ export interface HostPrivateState {
       challengeTitle: string | null;
       selected: boolean;
     }>;
+    savingGrace?: HostSavingGraceHostState | null;
   };
 }

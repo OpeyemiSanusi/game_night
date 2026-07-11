@@ -29,7 +29,7 @@ export async function GET(request: Request) {
   const { data: questions, error: questionsError } = await supabase
     .from("questions")
     .select(
-      "id, pack_id, quote, answer_options, correct_answer_id, sent_at, next_sender_options, correct_next_sender_id, reaction_count, category, difficulty, host_note, enabled",
+      "id, pack_id, quote, answer_options, correct_answer_id, sent_at, time_of_day, next_sender_options, correct_next_sender_id, reaction_count, category, difficulty, host_note, enabled",
     )
     .order("created_at", { ascending: false });
 

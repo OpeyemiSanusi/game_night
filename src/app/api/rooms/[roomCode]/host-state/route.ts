@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import { fail, ok } from "@/lib/server/http";
+import { loadHostSavingGraceState } from "@/lib/server/host-saving-grace";
 import { rebuildPublicRoomState } from "@/lib/server/room-state";
 import { tokenHashesMatch } from "@/lib/server/tokens";
 import { normalizeRoomCode } from "@/lib/validation";
@@ -204,6 +205,8 @@ export async function GET(
     return fail(assignmentsError.message, 500);
   }
 
+  const savingGrace = await loadHostSavingGraceState(supabase, room);
+
   const response: HostPrivateState = {
     room: {
       id: room.id,
@@ -234,6 +237,7 @@ export async function GET(
             selected: Boolean(assignment.challenge_id),
           };
         }) || [],
+      savingGrace,
     },
   };
 

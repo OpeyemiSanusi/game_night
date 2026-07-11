@@ -2,6 +2,7 @@ import "server-only";
 
 import { getJoinUrl, SOFT_PLAYER_CAP } from "@/lib/config";
 import { readSettings } from "@/lib/server/game-utils";
+import { hydrateAnswerOptions } from "@/lib/server/questions";
 import type {
   AnswerOption,
   GamePhase,
@@ -291,24 +292,9 @@ export function buildPublicRoomState(
 
   if (
     gameData.attempts.length > 0 &&
-    [
-      "SAVING_GRACE_CATEGORY",
-      "SAVING_GRACE_ACTIVE",
-      "SAVING_GRACE_RESULT",
-      "SACRIFICIAL_LAMB_SELECTION",
-      "SACRIFICIAL_LAMB_REVEAL",
-      "CONSEQUENCE_CHOICE",
-      "DRINK_CONFIRMATION",
-      "CHALLENGE_REVEAL",
-      "CHALLENGE_ACTIVE",
-      "CHALLENGE_RESULT",
-      "RESCUER_SELECTION",
-      "RESCUER_REVEAL",
-      "BOTTLE_FLIP_ACTIVE",
-      "BOTTLE_FLIP_RESULT",
-      "PIE_CONFIRMATION",
-      "ROUND_COMPLETE",
-    ].includes(phase)
+    ["SAVING_GRACE_CATEGORY", "SAVING_GRACE_ACTIVE", "SAVING_GRACE_RESULT"].includes(
+      phase,
+    )
   ) {
     const showResults = [
       "SAVING_GRACE_RESULT",
@@ -559,9 +545,19 @@ export async function rebuildPublicRoomState(roomId: string) {
         }
       }
 
+      const question = questionResult.data
+        ? {
+            ...questionResult.data,
+            answer_options: await hydrateAnswerOptions(
+              supabase,
+              questionResult.data.answer_options,
+            ),
+          }
+        : null;
+
       gameData = {
         round,
-        question: questionResult.data || null,
+        question,
         leaders: leadersResult.data || [],
         votes: votesResult.data || [],
         attempts: attemptsResult.data || [],

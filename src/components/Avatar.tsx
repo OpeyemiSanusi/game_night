@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import type { PlayerPublic } from "@/lib/types";
 
 interface AvatarProps {
@@ -12,16 +15,21 @@ const sizeClasses = {
 };
 
 export function Avatar({ player, size = "md" }: AvatarProps) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const avatarUrl =
+    player.avatarUrl && failedUrl !== player.avatarUrl ? player.avatarUrl : null;
+
   return (
     <div
       className={`${sizeClasses[size]} grid shrink-0 place-items-center overflow-hidden rounded-full border border-white/20 bg-white/10 font-black text-white shadow-[0_0_20px_rgba(255,255,255,0.08)]`}
       aria-label={player.displayName}
     >
-      {player.avatarUrl ? (
+      {avatarUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={player.avatarUrl}
+          src={avatarUrl}
           alt=""
+          onError={() => setFailedUrl(avatarUrl)}
           className="h-full w-full object-cover"
         />
       ) : (

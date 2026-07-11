@@ -7,6 +7,7 @@ import {
   readSettings,
   savingGracePrompt,
 } from "@/lib/server/game-utils";
+import { hydrateAnswerOptions } from "@/lib/server/questions";
 import { normalizeRoomCode } from "@/lib/validation";
 import type {
   AnswerOption,
@@ -187,7 +188,9 @@ export async function GET(
     ]);
 
     actions.canVote = room.phase === "QUESTION_ACTIVE";
-    actions.answerOptions = question?.answer_options || [];
+    actions.answerOptions = question
+      ? await hydrateAnswerOptions(supabase, question.answer_options)
+      : [];
     myVote = vote?.answer_id || null;
   }
 
@@ -295,11 +298,12 @@ export async function GET(
         ? supabase
             .from("questions")
             .select(
-              "sent_at, next_sender_options, correct_next_sender_id, reaction_count",
+              "sent_at, time_of_day, next_sender_options, correct_next_sender_id, reaction_count",
             )
             .eq("id", round.question_id)
             .maybeSingle<{
               sent_at: string;
+              time_of_day: string | null;
               next_sender_options: AnswerOption[];
               correct_next_sender_id: string | null;
               reaction_count: number;

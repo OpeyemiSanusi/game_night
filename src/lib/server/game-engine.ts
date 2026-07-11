@@ -32,6 +32,7 @@ interface QuestionRow {
   answer_options: AnswerOption[];
   correct_answer_id: string;
   sent_at: string;
+  time_of_day: string | null;
   next_sender_options: AnswerOption[];
   correct_next_sender_id: string | null;
   reaction_count: number;
@@ -149,7 +150,7 @@ async function loadQuestion(supabase: SupabaseAdmin, questionId: string) {
   const { data, error } = await supabase
     .from("questions")
     .select(
-      "id, quote, answer_options, correct_answer_id, sent_at, next_sender_options, correct_next_sender_id, reaction_count",
+      "id, quote, answer_options, correct_answer_id, sent_at, time_of_day, next_sender_options, correct_next_sender_id, reaction_count",
     )
     .eq("id", questionId)
     .single();

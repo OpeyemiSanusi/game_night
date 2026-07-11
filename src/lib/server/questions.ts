@@ -1,10 +1,14 @@
 import "server-only";
 
+import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type { AnswerOption } from "@/lib/types";
+
+export const ANSWER_OPTION_AVATAR_BUCKET = "answer-option-avatars";
 
 export interface QuestionImportInput {
   quote: unknown;
   sentAt: unknown;
+  timeOfDay?: unknown;
   answerOptions: unknown;
   correctAnswerId: unknown;
   nextSenderOptions: unknown;
@@ -24,6 +28,7 @@ export interface QuestionPackImportInput {
 export interface NormalizedQuestionImport {
   quote: string;
   sentAt: string;
+  timeOfDay: string | null;
   answerOptions: AnswerOption[];
   correctAnswerId: string;
   nextSenderOptions: AnswerOption[];
@@ -49,9 +54,74 @@ function cleanString(value: unknown, maxLength = 5000) {
   return trimmed ? trimmed.slice(0, maxLength) : null;
 }
 
+function cleanTimeOfDay(value: unknown) {
+  const cleaned = cleanString(value, 20);
+
+  return cleaned === "Morning" || cleaned === "Afternoon" || cleaned === "Night"
+    ? cleaned
+    : null;
+}
+
+export function answerOptionId(label: string) {
+  const id = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return id || "option";
+}
+
+export async function hydrateAnswerOptions(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  options: AnswerOption[],
+) {
+  const labels = [...new Set(options.map((option) => option.name).filter(Boolean))];
+
+  if (labels.length === 0) {
+    return options;
+  }
+
+  const { data, error } = await supabase
+    .from("answer_option_people")
+    .select("label, avatar_path")
+    .in("label", labels)
+    .returns<Array<{ label: string; avatar_path: string | null }>>();
+
+  if (error || !data) {
+    return options;
+  }
+
+  const avatarPathByLabel = new Map(
+    data
+      .filter((person) => person.avatar_path)
+      .map((person) => [person.label, person.avatar_path as string]),
+  );
+
+  return options.map((option) => {
+    if (option.avatarUrl) {
+      return option;
+    }
+
+    const avatarPath = avatarPathByLabel.get(option.name);
+
+    if (!avatarPath) {
+      return option;
+    }
+
+    const { data: publicUrl } = supabase.storage
+      .from(ANSWER_OPTION_AVATAR_BUCKET)
+      .getPublicUrl(avatarPath);
+
+    return {
+      ...option,
+      avatarUrl: publicUrl.publicUrl,
+    };
+  });
+}
+
 function normalizeOptions(value: unknown, label: string) {
-  if (!Array.isArray(value) || value.length !== 3) {
-    throw new Error(`${label} must contain exactly 3 options.`);
+  if (!Array.isArray(value) || value.length < 3 || value.length > 4) {
+    throw new Error(`${label} must contain 3 or 4 options.`);
   }
 
   const seen = new Set<string>();
@@ -111,6 +181,7 @@ export function normalizeQuestionPackImport(
     const question = rawQuestion as QuestionImportInput;
     const quote = cleanString(question.quote);
     const sentAtRaw = cleanString(question.sentAt, 80);
+    const timeOfDay = cleanTimeOfDay(question.timeOfDay);
     const correctAnswerId = cleanString(question.correctAnswerId, 120);
     const correctNextSenderId = cleanString(question.correctNextSenderId, 120);
     const reactionCount = Number(question.reactionCount);
@@ -150,6 +221,7 @@ export function normalizeQuestionPackImport(
     return {
       quote,
       sentAt: new Date(sentAtRaw).toISOString(),
+      timeOfDay,
       answerOptions,
       correctAnswerId,
       nextSenderOptions,
