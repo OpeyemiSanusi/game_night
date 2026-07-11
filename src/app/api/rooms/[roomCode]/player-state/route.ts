@@ -223,10 +223,7 @@ export async function GET(
         (candidate) =>
           candidate.status === "active" && candidate.id !== leaderId,
       ) || [];
-    actions.lambOptions =
-      nonLeaderPlayers.length > 0
-        ? nonLeaderPlayers
-        : team?.players.filter((candidate) => candidate.status === "active") || [];
+    actions.lambOptions = nonLeaderPlayers;
     actions.selectedLambPlayerId = penalty?.lamb_player_id || null;
     actions.selectedChallengeId = assignment?.challenge_id || null;
     actions.leaderChallengeOptions =
@@ -321,7 +318,9 @@ export async function GET(
   }
 
   if (leader && room.phase === "SACRIFICIAL_LAMB_SELECTION" && team) {
-    actions.lambOptions = team.players.filter((candidate) => candidate.status === "active");
+    actions.lambOptions = team.players.filter(
+      (candidate) => candidate.status === "active" && candidate.id !== player.id,
+    );
   }
 
   if (round) {

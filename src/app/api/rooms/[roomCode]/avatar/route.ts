@@ -26,11 +26,14 @@ export async function POST(
     return fail("Avatar must be below 600KB after compression.");
   }
 
-  const path = `avatars/${auth.room.id}/${auth.player.id}.webp`;
+  const extension = file.type === "image/jpeg" ? "jpg" : "webp";
+  const path = `avatars/${auth.room.id}/${auth.player.id}.${extension}`;
+  const version = Date.now();
   const { error: uploadError } = await auth.supabase.storage
     .from("avatars")
     .upload(path, file, {
       contentType: file.type || "image/webp",
+      cacheControl: "31536000",
       upsert: true,
     });
 
@@ -39,9 +42,10 @@ export async function POST(
   }
 
   const { data } = auth.supabase.storage.from("avatars").getPublicUrl(path);
+  const avatarUrl = `${data.publicUrl}?v=${version}`;
   const { error: updateError } = await auth.supabase
     .from("players")
-    .update({ avatar_url: data.publicUrl })
+    .update({ avatar_url: avatarUrl })
     .eq("id", auth.player.id);
 
   if (updateError) {
@@ -49,5 +53,5 @@ export async function POST(
   }
 
   const publicState = await rebuildPublicRoomState(auth.room.id);
-  return ok({ avatarUrl: data.publicUrl, publicState });
+  return ok({ avatarUrl, publicState });
 }

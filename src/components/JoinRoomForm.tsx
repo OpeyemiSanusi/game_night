@@ -13,6 +13,10 @@ interface JoinRoomResponse {
   error?: string;
 }
 
+interface AvatarUploadResponse {
+  error?: string;
+}
+
 interface JoinRoomFormProps {
   initialRoomCode?: string;
 }
@@ -59,11 +63,16 @@ export function JoinRoomForm({ initialRoomCode = "" }: JoinRoomFormProps) {
     const formData = new FormData();
     formData.set("avatar", avatar);
 
-    await fetch(`/api/rooms/${encodeURIComponent(room)}/avatar`, {
+    const response = await fetch(`/api/rooms/${encodeURIComponent(room)}/avatar`, {
       method: "POST",
       headers: { "x-player-token": token },
       body: formData,
     });
+    const payload = (await response.json()) as AvatarUploadResponse;
+
+    if (!response.ok) {
+      throw new Error(payload.error || "Photo upload failed.");
+    }
   }
 
   async function joinRoom(event: FormEvent<HTMLFormElement>) {
@@ -91,11 +100,7 @@ export function JoinRoomForm({ initialRoomCode = "" }: JoinRoomFormProps) {
       writeStoredToken(playerTokenKey(payload.room.roomCode), payload.playerToken);
 
       if (avatarFile) {
-        try {
-          await uploadAvatar(payload.room.roomCode, payload.playerToken, avatarFile);
-        } catch {
-          // Joining should not fail because optional photo storage is unavailable.
-        }
+        await uploadAvatar(payload.room.roomCode, payload.playerToken, avatarFile);
       }
 
       router.push(`/play/${payload.room.roomCode}`);

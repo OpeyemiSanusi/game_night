@@ -25,15 +25,25 @@ export async function resizeAvatar(file: File) {
 
     context.drawImage(image, sourceX, sourceY, size, size, 0, 0, 512, 512);
 
-    const blob = await new Promise<Blob | null>((resolve) => {
+    let blob = await new Promise<Blob | null>((resolve) => {
       canvas.toBlob(resolve, "image/webp", 0.82);
     });
+    let type = "image/webp";
+    let name = "avatar.webp";
+
+    if (!blob) {
+      blob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob(resolve, "image/jpeg", 0.84);
+      });
+      type = "image/jpeg";
+      name = "avatar.jpg";
+    }
 
     if (!blob) {
       throw new Error("Could not compress that image.");
     }
 
-    return new File([blob], "avatar.webp", { type: "image/webp" });
+    return new File([blob], name, { type });
   } finally {
     URL.revokeObjectURL(imageUrl);
   }

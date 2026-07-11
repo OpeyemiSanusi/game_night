@@ -723,31 +723,37 @@ export function PlayerRoom({ roomCode }: PlayerRoomProps) {
           {isLeader && !lambDone ? (
             <>
               <StepTwoPrompt>Pick a sacrificial lamb</StepTwoPrompt>
-              <section className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {(actions.lambOptions || []).map((player) => (
-                  <StepTwoPlayerOption
-                    key={player.id}
-                    player={player}
-                    selected={selectedLambId === player.id}
-                    onClick={() => setSelectedStepTwoLambId(player.id)}
-                  />
-                ))}
-              </section>
-              <button
-                type="button"
-                disabled={!selectedLambId || Boolean(busyAction)}
-                onClick={() =>
-                  void postPlayer(
-                    "/leader/sacrificial-lamb",
-                    { lambPlayerId: selectedLambId },
-                    `LAMB_${selectedLambId}`,
-                  )
-                }
-                className="h-16 rounded-[1.25rem] bg-purple-700 px-6 text-2xl font-black text-white shadow-[0_18px_40px_rgba(80,20,140,0.35)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
-                style={{ fontFamily: "var(--game-comic-font)" }}
-              >
-                {busyAction?.startsWith("LAMB_") ? "Saving..." : "Done"}
-              </button>
+              {(actions.lambOptions || []).length > 0 ? (
+                <>
+                  <section className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {(actions.lambOptions || []).map((player) => (
+                      <StepTwoPlayerOption
+                        key={player.id}
+                        player={player}
+                        selected={selectedLambId === player.id}
+                        onClick={() => setSelectedStepTwoLambId(player.id)}
+                      />
+                    ))}
+                  </section>
+                  <button
+                    type="button"
+                    disabled={!selectedLambId || Boolean(busyAction)}
+                    onClick={() =>
+                      void postPlayer(
+                        "/leader/sacrificial-lamb",
+                        { lambPlayerId: selectedLambId },
+                        `LAMB_${selectedLambId}`,
+                      )
+                    }
+                    className="h-16 rounded-[1.25rem] bg-purple-700 px-6 text-2xl font-black text-white shadow-[0_18px_40px_rgba(80,20,140,0.35)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                    style={{ fontFamily: "var(--game-comic-font)" }}
+                  >
+                    {busyAction?.startsWith("LAMB_") ? "Saving..." : "Done"}
+                  </button>
+                </>
+              ) : (
+                <StepTwoPrompt>Waiting for a teammate to join your team</StepTwoPrompt>
+              )}
             </>
           ) : null}
 

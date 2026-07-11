@@ -6,7 +6,7 @@ export const SOFT_PLAYER_CAP = 31;
 
 export const DEFAULT_ROOM_SETTINGS = {
   rounds: 10,
-  questionTimerSeconds: 25,
+  questionTimerSeconds: 60,
   challengeSelectionSeconds: 20,
   savingGraceCategorySeconds: 5,
   savingGraceAnswerSeconds: 10,

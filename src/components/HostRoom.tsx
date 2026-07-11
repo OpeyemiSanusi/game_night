@@ -584,13 +584,13 @@ function HostPenaltyReveal({
 
   return (
     <main
-      className="min-h-dvh px-4 py-6 text-black sm:px-6 lg:px-8"
+      className="h-dvh overflow-hidden px-4 py-4 text-black sm:px-6"
       style={{ background: "var(--step-two-gradient)" }}
     >
-      <div className="mx-auto grid w-full max-w-5xl gap-6">
-        <section className="grid gap-5 text-center">
+      <div className="mx-auto grid h-full w-full max-w-5xl content-center gap-3">
+        <section className="grid gap-3 text-center">
           <div
-            className="text-3xl font-black text-white drop-shadow sm:text-4xl"
+            className="text-2xl font-black text-white drop-shadow sm:text-3xl"
             style={{ fontFamily: "var(--game-comic-font)" }}
           >
             Punishment
@@ -600,7 +600,7 @@ function HostPenaltyReveal({
             type="button"
             onClick={onReveal}
             disabled={revealed || !penalty}
-            className="mx-auto grid aspect-square w-full max-w-xl place-items-center overflow-hidden rounded-[1.75rem] bg-white p-5 shadow-[0_18px_45px_rgba(0,0,0,0.14)] disabled:cursor-default"
+            className="mx-auto grid aspect-square w-full max-w-[min(46vh,22rem)] place-items-center overflow-hidden rounded-[1.35rem] bg-white p-3 shadow-[0_18px_45px_rgba(0,0,0,0.14)] disabled:cursor-default"
           >
             {penalty ? (
               <div className="relative h-full w-full overflow-hidden rounded-[1.25rem] bg-black/10">
@@ -646,18 +646,18 @@ function HostPenaltyReveal({
           </button>
 
           {penalty && revealed ? (
-            <section className="rounded-[1.75rem] bg-white p-6 text-center shadow-[0_18px_45px_rgba(0,0,0,0.14)]">
+            <section className="rounded-[1.35rem] bg-white p-4 text-center shadow-[0_18px_45px_rgba(0,0,0,0.14)]">
               <div className="text-sm font-black uppercase text-black/45">
                 {penalty.teamName}
               </div>
               <h1
-                className="mt-2 text-4xl font-black leading-tight sm:text-6xl"
+                className="mt-1 text-3xl font-black leading-tight sm:text-4xl"
                 style={{ fontFamily: "var(--game-comic-font)" }}
               >
                 {penalty.lambName || "Selected player"}
               </h1>
               <div
-                className="mt-4 text-3xl font-black text-purple-700"
+                className="mt-2 text-2xl font-black text-purple-700"
                 style={{ fontFamily: "var(--game-comic-font)" }}
               >
                 {penalty.consequenceChoice
@@ -665,11 +665,11 @@ function HostPenaltyReveal({
                   : "Punishment"}
               </div>
               {penalty.challenge ? (
-                <div className="mx-auto mt-5 max-w-2xl rounded-[1.25rem] bg-black/[0.06] p-4 text-left">
-                  <div className="text-xl font-black text-black">
+                <div className="mx-auto mt-3 max-w-2xl rounded-[1rem] bg-black/[0.06] p-3 text-left">
+                  <div className="text-lg font-black text-black">
                     {penalty.challenge.title}
                   </div>
-                  <div className="mt-2 font-bold leading-7 text-black/60">
+                  <div className="mt-1 line-clamp-2 text-sm font-bold leading-5 text-black/60">
                     {penalty.challenge.instructions}
                   </div>
                 </div>
@@ -682,7 +682,7 @@ function HostPenaltyReveal({
               type="button"
               onClick={() => onAction(action)}
               disabled={Boolean(busyAction)}
-              className="mx-auto h-16 w-full max-w-sm rounded-[1.25rem] bg-purple-700 px-6 text-2xl font-black text-white shadow-[0_18px_40px_rgba(80,20,140,0.35)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+              className="mx-auto h-14 w-full max-w-sm rounded-[1.25rem] bg-purple-700 px-6 text-xl font-black text-white shadow-[0_18px_40px_rgba(80,20,140,0.35)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
               style={{ fontFamily: "var(--game-comic-font)" }}
             >
               {busyAction === action ? "Moving..." : labelForPunishmentPhase(state.phase)}
@@ -702,7 +702,7 @@ export function HostRoom({ roomCode, view = "host" }: HostRoomProps) {
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [rounds, setRounds] = useState(10);
-  const [questionTimerSeconds, setQuestionTimerSeconds] = useState(25);
+  const [questionTimerSeconds, setQuestionTimerSeconds] = useState(60);
   const [selectedQuestionPackId, setSelectedQuestionPackId] = useState("");
   const [selectedChallengeDeckId, setSelectedChallengeDeckId] = useState("");
   const [revealedPenaltyIds, setRevealedPenaltyIds] = useState<Record<string, boolean>>({});
@@ -749,7 +749,7 @@ export function HostRoom({ roomCode, view = "host" }: HostRoomProps) {
       setHostState(payload as HostPrivateState);
       setRounds(Number(payload.room.settings.rounds) || 10);
       setQuestionTimerSeconds(
-        Number(payload.room.settings.questionTimerSeconds) || 25,
+        Number(payload.room.settings.questionTimerSeconds) || 60,
       );
       setSelectedQuestionPackId(
         typeof payload.room.settings.selectedQuestionPackId === "string"
@@ -1322,6 +1322,53 @@ export function HostRoom({ roomCode, view = "host" }: HostRoomProps) {
         onReveal={revealActivePenalty}
         onAction={(action) => void runHostAction(action)}
       />
+    );
+  }
+
+  if (hostState && publicState && publicState.phase === "ROUND_COMPLETE") {
+    const isFinalRound = publicState.currentRoundNumber >= publicState.totalRounds;
+    const nextAction: HostAction = isFinalRound ? "END_GAME" : "NEXT_ROUND";
+
+    return (
+      <main
+        className="grid h-dvh overflow-hidden px-4 py-6 text-black sm:px-6 lg:px-8"
+        style={{ background: "var(--step-two-gradient)" }}
+      >
+        <div className="mx-auto grid h-full w-full max-w-5xl content-center gap-6">
+          {error ? (
+            <div className="rounded-[1.25rem] border border-red-200 bg-white px-4 py-3 font-bold text-red-700">
+              {error}
+            </div>
+          ) : null}
+
+          <section className="grid min-h-72 place-items-center rounded-[1.75rem] bg-white p-6 text-center shadow-[0_18px_45px_rgba(0,0,0,0.14)]">
+            <div>
+              <div className="text-sm font-black uppercase text-black/45">
+                Round {publicState.currentRoundNumber}/{publicState.totalRounds}
+              </div>
+              <h1
+                className="mt-3 text-4xl font-black leading-tight sm:text-6xl"
+                style={{ fontFamily: "var(--game-comic-font)" }}
+              >
+                Round complete
+              </h1>
+              <button
+                type="button"
+                onClick={() => void runHostAction(nextAction)}
+                disabled={Boolean(busyAction)}
+                className="mt-8 h-16 w-full min-w-72 rounded-[1.25rem] bg-purple-700 px-6 text-2xl font-black text-white shadow-[0_18px_40px_rgba(80,20,140,0.35)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ fontFamily: "var(--game-comic-font)" }}
+              >
+                {busyAction === nextAction
+                  ? "Moving..."
+                  : isFinalRound
+                    ? "Show Winner"
+                    : "Next Question"}
+              </button>
+            </div>
+          </section>
+        </div>
+      </main>
     );
   }
 

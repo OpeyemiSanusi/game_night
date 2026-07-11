@@ -485,14 +485,15 @@ async function finalizeStepTwoSelections(
     const nonLeaderPlayers = activeTeamPlayers.filter(
       (candidate) => candidate.id !== leaderId,
     );
-    const lambCandidates =
-      nonLeaderPlayers.length > 0 ? nonLeaderPlayers : activeTeamPlayers;
+    const lambCandidates = nonLeaderPlayers;
     const fallbackLambId =
-      lambCandidates.length > 0 ? randomItem(lambCandidates).id : leaderId;
+      lambCandidates.length > 0 ? randomItem(lambCandidates).id : null;
     const lambId = penalty.lamb_player_id || fallbackLambId;
 
     if (!lambId) {
-      throw new Error("Every team needs an active player for selection.");
+      throw new Error(
+        "Every team needs at least one non-leader teammate for lamb selection.",
+      );
     }
 
     const choices = readConsequenceChoices(penalty.payload);
@@ -1783,6 +1784,11 @@ export async function selectSacrificialLamb(
   }
 
   const round = await requireLeader(supabase, room, player);
+
+  if (lambPlayerId === player.id) {
+    throw new Error("Group Leaders cannot pick themselves as the lamb.");
+  }
+
   await ensureSelectionPenalties(supabase, room, round);
   const players = await loadPlayers(supabase, room.id);
   const selected = players.find(
