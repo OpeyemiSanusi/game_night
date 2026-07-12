@@ -2,6 +2,10 @@ import { TEAM_PALETTE } from "@/lib/config";
 import { requireHost } from "@/lib/server/auth";
 import { readSettings, randomSample } from "@/lib/server/game-utils";
 import { fail, ok, readJsonObject } from "@/lib/server/http";
+import {
+  deactivateDuplicatePlayerNames,
+  uniquePlayersByDisplayName,
+} from "@/lib/server/player-dedupe";
 import { rebuildPublicRoomState } from "@/lib/server/room-state";
 
 export const runtime = "nodejs";
@@ -45,6 +49,8 @@ export async function POST(
 
   try {
     if (action === "AUTO_BALANCE") {
+      await deactivateDuplicatePlayerNames(auth.supabase, auth.room.id);
+
       const [{ data: teams, error: teamsError }, { data: players, error: playersError }] =
         await Promise.all([
           auth.supabase
@@ -55,11 +61,20 @@ export async function POST(
             .returns<Array<{ id: string; team_index: number }>>(),
           auth.supabase
             .from("players")
-            .select("id")
+            .select("id, display_name, join_order, status, is_connected, last_seen_at")
             .eq("room_id", auth.room.id)
             .eq("status", "active")
             .order("join_order", { ascending: true })
-            .returns<Array<{ id: string }>>(),
+            .returns<
+              Array<{
+                id: string;
+                display_name: string;
+                join_order: number;
+                status: string;
+                is_connected: boolean | null;
+                last_seen_at: string | null;
+              }>
+            >(),
         ]);
 
       if (teamsError) {
@@ -70,7 +85,8 @@ export async function POST(
         throw new Error(playersError.message);
       }
 
-      const shuffledPlayers = randomSample(players || [], players?.length || 0);
+      const balancePlayers = uniquePlayersByDisplayName(players || []);
+      const shuffledPlayers = randomSample(balancePlayers, balancePlayers.length);
       const base = Math.floor(shuffledPlayers.length / (teams?.length || 1));
       const remainder = shuffledPlayers.length % (teams?.length || 1);
       let cursor = 0;

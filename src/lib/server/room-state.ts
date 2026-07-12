@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getJoinUrl, SOFT_PLAYER_CAP } from "@/lib/config";
+import { uniquePlayersByDisplayName } from "@/lib/server/player-dedupe";
 import { readSettings } from "@/lib/server/game-utils";
 import { hydrateAnswerOptions } from "@/lib/server/questions";
 import type {
@@ -143,10 +144,10 @@ export function buildPublicRoomState(
     assignmentChallenges: AssignmentChallengeRow[];
   },
 ): PublicRoomState {
-  const publicPlayers = players.map(toPlayerPublic);
+  const publicPlayers = uniquePlayersByDisplayName(players).map(toPlayerPublic);
   const teamsWithPlayers: TeamPublic[] = teams.map((team) => {
     const teamPlayers = publicPlayers.filter(
-      (player) => player.teamId === team.id && player.status !== "inactive",
+      (player) => player.teamId === team.id,
     );
 
     return {

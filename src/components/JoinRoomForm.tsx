@@ -2,7 +2,11 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { playerTokenKey, writeStoredToken } from "@/lib/client-storage";
+import {
+  playerTokenKey,
+  readStoredToken,
+  writeStoredToken,
+} from "@/lib/client-storage";
 import { resizeAvatar } from "@/lib/client-avatar";
 
 interface JoinRoomResponse {
@@ -24,6 +28,7 @@ interface JoinRoomFormProps {
 export function JoinRoomForm({ initialRoomCode = "" }: JoinRoomFormProps) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const submittingRef = useRef(false);
   const [roomCode, setRoomCode] = useState(initialRoomCode.toUpperCase());
   const [displayName, setDisplayName] = useState("");
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
@@ -77,17 +82,28 @@ export function JoinRoomForm({ initialRoomCode = "" }: JoinRoomFormProps) {
 
   async function joinRoom(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (submittingRef.current) {
+      return;
+    }
+
+    submittingRef.current = true;
     setIsSubmitting(true);
     setError(null);
 
     const normalized = normalizedRoomCode();
+    const tokenKey = playerTokenKey(normalized);
+    const existingToken = readStoredToken(tokenKey);
 
     try {
       const response = await fetch(
         `/api/rooms/${encodeURIComponent(normalized)}/join`,
         {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            ...(existingToken ? { "x-player-token": existingToken } : {}),
+          },
           body: JSON.stringify({ displayName }),
         },
       );
@@ -97,7 +113,7 @@ export function JoinRoomForm({ initialRoomCode = "" }: JoinRoomFormProps) {
         throw new Error(payload.error || "Could not join room.");
       }
 
-      writeStoredToken(playerTokenKey(payload.room.roomCode), payload.playerToken);
+      writeStoredToken(tokenKey, payload.playerToken);
 
       if (avatarFile) {
         await uploadAvatar(payload.room.roomCode, payload.playerToken, avatarFile);
@@ -109,6 +125,7 @@ export function JoinRoomForm({ initialRoomCode = "" }: JoinRoomFormProps) {
         joinError instanceof Error ? joinError.message : "Could not join room.",
       );
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   }

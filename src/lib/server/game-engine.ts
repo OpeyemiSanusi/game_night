@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomInt } from "crypto";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { deactivateDuplicatePlayerNames } from "@/lib/server/player-dedupe";
 import { rebuildPublicRoomState } from "@/lib/server/room-state";
 import type { PlayerAuthRow, RoomAuthRow } from "@/lib/server/auth";
 import {
@@ -1590,10 +1591,14 @@ export async function runHostAction(
 ) {
   switch (action) {
     case "LOCK_TEAMS":
+      await deactivateDuplicatePlayerNames(supabase, room.id);
       await setRoomPhase(supabase, room.id, "TEAM_SETUP");
       break;
-    case "START_GAME":
     case "NEXT_ROUND":
+      await createNextRound(supabase, room);
+      break;
+    case "START_GAME":
+      await deactivateDuplicatePlayerNames(supabase, room.id);
       await createNextRound(supabase, room);
       break;
     case "SHOW_QUESTION":
